@@ -1,37 +1,72 @@
-import { type User, type InsertUser } from "@shared/schema";
 import { randomUUID } from "crypto";
+import type { ImageAnalysis } from "@shared/schema";
 
-// modify the interface with any CRUD methods
-// you might need
+export interface SessionData {
+  id: string;
+  status: "uploading" | "processing" | "filtering" | "analyzing" | "deciding" | "completed" | "error";
+  mode: "social" | "minimal";
+  totalImages: number;
+  processedImages: number;
+  originalImages: ImageAnalysis[];
+  curatedImages: ImageAnalysis[];
+  stats?: {
+    duplicatesRemoved: number;
+    blurryRemoved: number;
+    lowBrightnessRemoved: number;
+    totalRemoved: number;
+    clustersFound: number;
+  };
+  createdAt: string;
+  error?: string;
+  spacesKeys: string[];
+}
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createSession(mode: "social" | "minimal"): SessionData;
+  getSession(id: string): SessionData | undefined;
+  updateSession(id: string, updates: Partial<SessionData>): SessionData | undefined;
+  deleteSession(id: string): void;
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+  private sessions: Map<string, SessionData>;
 
   constructor() {
-    this.users = new Map();
+    this.sessions = new Map();
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
+  createSession(mode: "social" | "minimal"): SessionData {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const session: SessionData = {
+      id,
+      status: "uploading",
+      mode,
+      totalImages: 0,
+      processedImages: 0,
+      originalImages: [],
+      curatedImages: [],
+      createdAt: new Date().toISOString(),
+      spacesKeys: [],
+    };
+    this.sessions.set(id, session);
+    return session;
+  }
+
+  getSession(id: string): SessionData | undefined {
+    return this.sessions.get(id);
+  }
+
+  updateSession(id: string, updates: Partial<SessionData>): SessionData | undefined {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+
+    const updated = { ...session, ...updates };
+    this.sessions.set(id, updated);
+    return updated;
+  }
+
+  deleteSession(id: string): void {
+    this.sessions.delete(id);
   }
 }
 
