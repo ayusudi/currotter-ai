@@ -24,6 +24,110 @@ const upload = multer({
   },
 });
 
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Error:
+ *       type: object
+ *       properties:
+ *         message:
+ *           type: string
+ *           description: Error description
+ *       example:
+ *         message: "Session not found"
+ *     ImageAnalysis:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: string
+ *           format: uuid
+ *         filename:
+ *           type: string
+ *         spacesUrl:
+ *           type: string
+ *           format: uri
+ *         blurScore:
+ *           type: number
+ *           description: Focus quality score (higher is sharper)
+ *         brightnessScore:
+ *           type: number
+ *           description: Brightness level (0.0–1.0)
+ *         aestheticScore:
+ *           type: number
+ *           description: AI aesthetic quality rating (0.0–1.0)
+ *         sceneDescription:
+ *           type: string
+ *           description: AI-generated scene description
+ *         finalScore:
+ *           type: number
+ *           description: Weighted composite score used for ranking
+ *         isDuplicate:
+ *           type: boolean
+ *         isBlurry:
+ *           type: boolean
+ *         isTooLow:
+ *           type: boolean
+ *         isSelected:
+ *           type: boolean
+ *           description: Whether this image was selected for the curated set
+ *     SessionStats:
+ *       type: object
+ *       properties:
+ *         duplicatesRemoved:
+ *           type: integer
+ *         blurryRemoved:
+ *           type: integer
+ *         lowBrightnessRemoved:
+ *           type: integer
+ *         totalRemoved:
+ *           type: integer
+ *         clustersFound:
+ *           type: integer
+ *     Session:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: string
+ *           format: uuid
+ *         mode:
+ *           type: string
+ *           enum: [social, minimal]
+ *         status:
+ *           type: string
+ *           enum: [pending, processing, filtering, analyzing, deciding, completed, error]
+ *           description: Current pipeline stage
+ *         totalImages:
+ *           type: integer
+ *           description: Total images uploaded
+ *         processedImages:
+ *           type: integer
+ *           description: Images processed so far in the current stage
+ *         curatedImages:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/ImageAnalysis'
+ *           description: Final curated image set (populated when status is "completed")
+ *         stats:
+ *           $ref: '#/components/schemas/SessionStats'
+ *         error:
+ *           type: string
+ *           description: Error message (populated when status is "error")
+ *       example:
+ *         id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+ *         mode: "social"
+ *         status: "completed"
+ *         totalImages: 12
+ *         processedImages: 12
+ *         curatedImages: []
+ *         stats:
+ *           duplicatesRemoved: 3
+ *           blurryRemoved: 1
+ *           lowBrightnessRemoved: 0
+ *           totalRemoved: 4
+ *           clustersFound: 5
+ */
+
 const sessionSubscribers = new Map<string, Set<WebSocket>>();
 
 function broadcastProgress(sessionId: string, payload: any) {
@@ -66,6 +170,71 @@ export async function registerRoutes(
     });
   });
 
+  /**
+   * @swagger
+   * /api/curate:
+   *   post:
+   *     summary: Upload images and start the AI curation pipeline
+   *     description: >
+   *       Accepts a batch of images (minimum 2, maximum 50) and begins the
+   *       three-agent AI curation pipeline. The pipeline runs asynchronously
+   *       after the response is returned. Use the session ID to poll for
+   *       status via GET /api/sessions/{id} or subscribe to real-time
+   *       updates via WebSocket at /ws.
+   *     tags: [Curation]
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         multipart/form-data:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - images
+   *             properties:
+   *               images:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *                   format: binary
+   *                 description: Image files to curate (2–50 files, max 20MB each). Supported formats are JPEG, PNG, WebP, and other common image types.
+   *               mode:
+   *                 type: string
+   *                 enum: [social, minimal]
+   *                 default: social
+   *                 description: >
+   *                   Curation mode. "social" keeps more variety (up to 2 per
+   *                   cluster), "minimal" keeps only the best (1 per cluster).
+   *     responses:
+   *       200:
+   *         description: Curation session created successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 sessionId:
+   *                   type: string
+   *                   format: uuid
+   *                   description: Unique session identifier for tracking progress and retrieving results
+   *                 totalImages:
+   *                   type: integer
+   *                   description: Number of images uploaded
+   *             example:
+   *               sessionId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+   *               totalImages: 12
+   *       400:
+   *         description: Validation error (fewer than 2 images or invalid file type)
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   */
   app.post("/api/curate", upload.array("images", 50), async (req: Request, res: Response) => {
     try {
       const files = req.files as Express.Multer.File[];
@@ -94,6 +263,38 @@ export async function registerRoutes(
     }
   });
 
+  /**
+   * @swagger
+   * /api/sessions/{id}:
+   *   get:
+   *     summary: Get curation session status and results
+   *     description: >
+   *       Returns the current status of a curation session including progress
+   *       information, pipeline stats, and curated image results when complete.
+   *       Poll this endpoint to track processing progress if not using WebSocket.
+   *     tags: [Sessions]
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: The curation session ID returned from POST /api/curate
+   *     responses:
+   *       200:
+   *         description: Session details
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Session'
+   *       404:
+   *         description: Session not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   */
   app.get("/api/sessions/:id", (req: Request, res: Response) => {
     const session = storage.getSession(req.params.id);
     if (!session) {
@@ -102,6 +303,50 @@ export async function registerRoutes(
     return res.json(session);
   });
 
+  /**
+   * @swagger
+   * /api/sessions/{id}/download:
+   *   get:
+   *     summary: Download curated images as a ZIP file
+   *     description: >
+   *       Downloads all curated images from a completed curation session as
+   *       a compressed ZIP archive. The session must have a "completed" status.
+   *     tags: [Sessions]
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: The curation session ID
+   *     responses:
+   *       200:
+   *         description: ZIP archive containing curated images
+   *         content:
+   *           application/zip:
+   *             schema:
+   *               type: string
+   *               format: binary
+   *       400:
+   *         description: Session not yet completed
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   *       404:
+   *         description: Session not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   */
   app.get("/api/sessions/:id/download", async (req: Request, res: Response) => {
     try {
       const session = storage.getSession(req.params.id);
