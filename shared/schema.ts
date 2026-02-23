@@ -34,6 +34,7 @@ export const imageAnalysisSchema = z.object({
   embedding: z.array(z.number()).optional(),
   clusterId: z.number().optional(),
   finalScore: z.number().optional(),
+  selectionReason: z.string().optional(),
   isDuplicate: z.boolean().default(false),
   isBlurry: z.boolean().default(false),
   isTooLow: z.boolean().default(false),

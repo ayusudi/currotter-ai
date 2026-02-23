@@ -12,7 +12,59 @@ export interface ScoredImage {
   brightnessScore: number;
   aestheticScore: number;
   sceneDescription: string;
+  selectionReason: string;
   embedding: number[];
+}
+
+function generateSelectionReason(
+  aestheticScore: number,
+  blurScore: number,
+  brightnessScore: number,
+  uniqueness: number,
+  clusterSize: number,
+  sceneDescription: string,
+  mode: "social" | "minimal"
+): string {
+  const reasons: string[] = [];
+
+  if (aestheticScore >= 0.8) {
+    reasons.push("Exceptional visual quality and composition");
+  } else if (aestheticScore >= 0.6) {
+    reasons.push("Good composition and pleasing colors");
+  } else if (aestheticScore >= 0.4) {
+    reasons.push("Decent overall quality");
+  }
+
+  const normalizedBlur = Math.min(1, blurScore / 1000);
+  if (normalizedBlur >= 0.8) {
+    reasons.push("very sharp focus");
+  } else if (normalizedBlur >= 0.5) {
+    reasons.push("good sharpness");
+  }
+
+  if (brightnessScore >= 0.3 && brightnessScore <= 0.7) {
+    reasons.push("well-balanced lighting");
+  } else if (brightnessScore > 0.7 && brightnessScore <= 0.8) {
+    reasons.push("bright and vibrant lighting");
+  }
+
+  if (clusterSize > 1) {
+    reasons.push(`best pick from ${clusterSize} similar shots`);
+  } else if (uniqueness >= 0.9) {
+    reasons.push("unique shot in the collection");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("Selected as a quality photo from the collection");
+  }
+
+  let reason = reasons[0].charAt(0).toUpperCase() + reasons[0].slice(1);
+  if (reasons.length > 1) {
+    reason += ", " + reasons.slice(1).join(", ");
+  }
+  reason += ".";
+
+  return reason;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -171,9 +223,15 @@ export function makeDecisions(
       brightnessScore: f.brightnessScore,
       aestheticScore: analysis?.aestheticScore ?? 0.5,
       sceneDescription: analysis?.sceneDescription ?? "",
+      selectionReason: "",
       embedding: analysis?.embedding ?? [],
     };
   });
+
+  const clusterSizes = new Map<number, number>();
+  for (const [clusterId, members] of clusterEntries) {
+    clusterSizes.set(clusterId, members.length);
+  }
 
   const selectionsPerCluster = mode === "social" ? 2 : 1;
 
@@ -186,6 +244,15 @@ export function makeDecisions(
     const toSelect = Math.min(selectionsPerCluster, clusterScored.length);
     for (let i = 0; i < toSelect; i++) {
       clusterScored[i].isSelected = true;
+      clusterScored[i].selectionReason = generateSelectionReason(
+        clusterScored[i].aestheticScore,
+        clusterScored[i].blurScore,
+        clusterScored[i].brightnessScore,
+        uniquenessScores.get(clusterScored[i].id) ?? 1,
+        members.length,
+        clusterScored[i].sceneDescription,
+        mode
+      );
     }
 
     if (clusterScored.length > 1) {

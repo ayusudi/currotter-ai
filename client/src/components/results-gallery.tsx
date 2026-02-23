@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, X, ChevronLeft, ChevronRight, Star, Maximize2, HardDriveUpload, ExternalLink, Check } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Star, Maximize2, HardDriveUpload, ExternalLink, Check, Info } from "lucide-react";
 import { SiGoogledrive } from "react-icons/si";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,8 +81,13 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportD
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
               loading="lazy"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="absolute bottom-0 left-0 right-0 p-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              {img.selectionReason && (
+                <p className="text-[10px] text-white/90 leading-snug mb-1.5 line-clamp-2" data-testid={`text-reason-${idx}`}>
+                  {img.selectionReason}
+                </p>
+              )}
               <div className="flex items-center justify-between gap-1">
                 <div className="flex items-center gap-1">
                   {img.finalScore !== undefined && (
@@ -95,13 +100,6 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportD
                 <Maximize2 className="w-4 h-4 text-white" />
               </div>
             </div>
-            {img.sceneDescription && (
-              <div className="absolute top-2 left-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <p className="text-[10px] text-white/90 line-clamp-2 bg-black/40 rounded px-1.5 py-0.5 backdrop-blur-sm">
-                  {img.sceneDescription}
-                </p>
-              </div>
-            )}
           </motion.div>
         ))}
       </div>
@@ -152,16 +150,24 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportD
               className="max-w-[90vw] max-h-[85vh] object-contain rounded-md"
               onClick={(e) => e.stopPropagation()}
             />
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2">
-              <p className="text-sm text-white">{images[lightboxIndex].filename}</p>
-              {images[lightboxIndex].finalScore !== undefined && (
-                <Badge variant="secondary" className="text-xs">
-                  Score: {(images[lightboxIndex].finalScore! * 100).toFixed(0)}
-                </Badge>
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 max-w-lg" onClick={(e) => e.stopPropagation()}>
+              {images[lightboxIndex].selectionReason && (
+                <div className="flex items-start gap-2 bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2.5" data-testid="text-lightbox-reason">
+                  <Info className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                  <p className="text-sm text-white/90 leading-snug">{images[lightboxIndex].selectionReason}</p>
+                </div>
               )}
-              <span className="text-xs text-white/60">
-                {lightboxIndex + 1} / {images.length}
-              </span>
+              <div className="flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2">
+                <p className="text-sm text-white">{images[lightboxIndex].filename}</p>
+                {images[lightboxIndex].finalScore !== undefined && (
+                  <Badge variant="secondary" className="text-xs">
+                    Score: {(images[lightboxIndex].finalScore! * 100).toFixed(0)}
+                  </Badge>
+                )}
+                <span className="text-xs text-white/60">
+                  {lightboxIndex + 1} / {images.length}
+                </span>
+              </div>
             </div>
           </motion.div>
         )}

@@ -570,6 +570,7 @@ async function processCurationPipeline(
           isBlurry: false,
           isTooLow: false,
           finalScore: 0.5,
+          selectionReason: "All photos kept — no filtering needed for this set.",
         } as ImageAnalysis;
       });
 
@@ -643,6 +644,7 @@ async function processCurationPipeline(
         aestheticScore: s.aestheticScore,
         sceneDescription: s.sceneDescription,
         finalScore: s.finalScore,
+        selectionReason: s.selectionReason,
         isDuplicate: false,
         isBlurry: false,
         isTooLow: false,
