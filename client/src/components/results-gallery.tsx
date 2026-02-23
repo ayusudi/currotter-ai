@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, Eye, X, ChevronLeft, ChevronRight, Star, Maximize2 } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, Star, Maximize2, HardDriveUpload, ExternalLink, Check } from "lucide-react";
+import { SiGoogledrive } from "react-icons/si";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ImageAnalysis } from "@shared/schema";
@@ -9,9 +10,12 @@ interface ResultsGalleryProps {
   images: ImageAnalysis[];
   onDownloadZip: () => void;
   isDownloading: boolean;
+  onExportDrive: () => void;
+  isExportingDrive: boolean;
+  driveExportUrl: string | null;
 }
 
-export function ResultsGallery({ images, onDownloadZip, isDownloading }: ResultsGalleryProps) {
+export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportDrive, isExportingDrive, driveExportUrl }: ResultsGalleryProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   if (images.length === 0) return null;
@@ -32,10 +36,32 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading }: Results
             The best shots from your collection, AI-selected
           </p>
         </div>
-        <Button onClick={onDownloadZip} disabled={isDownloading} data-testid="button-download-zip">
-          <Download className="w-4 h-4 mr-2" />
-          {isDownloading ? "Preparing..." : "Download ZIP"}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={onDownloadZip} disabled={isDownloading} data-testid="button-download-zip">
+            <Download className="w-4 h-4 mr-2" />
+            {isDownloading ? "Preparing..." : "Download ZIP"}
+          </Button>
+          {driveExportUrl ? (
+            <a href={driveExportUrl} target="_blank" rel="noopener noreferrer">
+              <Button variant="outline" className="gap-2" data-testid="button-open-drive">
+                <SiGoogledrive className="w-4 h-4" />
+                Open in Drive
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Button>
+            </a>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={onExportDrive}
+              disabled={isExportingDrive}
+              className="gap-2"
+              data-testid="button-export-drive"
+            >
+              <SiGoogledrive className="w-4 h-4" />
+              {isExportingDrive ? "Uploading..." : "Save to Google Drive"}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">

@@ -15,7 +15,8 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
   - `theme-provider.tsx` / `theme-toggle.tsx` - Dark/light mode
 
 ### Backend (Express + TypeScript)
-- **API Routes**: `server/routes.ts` - Upload endpoint, session status, ZIP download
+- **API Routes**: `server/routes.ts` - Upload endpoint, session status, ZIP download, Google Drive export
+- **Google Drive**: `server/gdrive.ts` - Google Drive integration via Replit connector for exporting curated photos
 - **Agent Pipeline** (`server/agents/`):
   1. **Filtering Agent** (`filtering.ts`) - Perceptual hashing (duplicates), Laplacian blur detection, brightness scoring
   2. **Analysis Agent** (`analysis.ts`) - DigitalOcean Gradient AI vision API for aesthetic scoring and scene description
@@ -65,6 +66,11 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ## Recent Changes
+- 2026-02-23: Added Google Drive export feature:
+  - New "Save to Google Drive" button in results gallery alongside ZIP download
+  - POST /api/sessions/:id/export-drive endpoint creates Drive folder and uploads curated photos
+  - After export, button changes to "Open in Drive" link to the created folder
+  - Uses Replit Google Drive connector for secure OAuth token management
 - 2026-02-23: Added Replit Auth (OpenID Connect) with Google login support:
   - Landing page with hero, features, how-it-works sections for logged-out users
   - Protected API endpoints with isAuthenticated middleware

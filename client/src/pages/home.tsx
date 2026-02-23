@@ -23,6 +23,8 @@ export default function Home() {
   const [curatedImages, setCuratedImages] = useState<ImageAnalysis[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isExportingDrive, setIsExportingDrive] = useState(false);
+  const [driveExportUrl, setDriveExportUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const { toast } = useToast();
   const fetchedRef = useRef(false);
@@ -167,12 +169,35 @@ export default function Home() {
     }
   };
 
+  const handleExportDrive = async () => {
+    if (!sessionId) return;
+    setIsExportingDrive(true);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/export-drive`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Export failed");
+      }
+      const data = await res.json();
+      setDriveExportUrl(data.folderUrl);
+      toast({ title: "Exported to Google Drive", description: `${data.fileCount} photos saved to your Drive` });
+    } catch (err: any) {
+      toast({ title: "Drive Export Error", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExportingDrive(false);
+    }
+  };
+
   const handleReset = () => {
     setAppState("upload");
     setSelectedFiles([]);
     setSessionId(null);
     setCuratedImages([]);
     setProgress(null);
+    setDriveExportUrl(null);
     fetchedRef.current = false;
   };
 
@@ -326,6 +351,9 @@ export default function Home() {
               images={curatedImages}
               onDownloadZip={handleDownloadZip}
               isDownloading={isDownloading}
+              onExportDrive={handleExportDrive}
+              isExportingDrive={isExportingDrive}
+              driveExportUrl={driveExportUrl}
             />
           </motion.div>
         )}

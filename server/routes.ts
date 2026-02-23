@@ -11,6 +11,7 @@ import { analyzeImages } from "./agents/analysis";
 import { makeDecisions } from "./agents/decision";
 import { log } from "./index";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { uploadToDrive } from "./gdrive";
 import type { ImageAnalysis } from "@shared/schema";
 
 const upload = multer({
@@ -379,6 +380,111 @@ export async function registerRoutes(
       res.setHeader("Content-Disposition", `attachment; filename="currotter-curated-${session.id.slice(0, 8)}.zip"`);
       return res.send(zipBuffer);
     } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  /**
+   * @swagger
+   * /api/sessions/{id}/export-drive:
+   *   post:
+   *     summary: Export curated images to Google Drive
+   *     description: >
+   *       Uploads all curated images from a completed curation session to a new
+   *       folder in the user's Google Drive. Returns a link to the created folder.
+   *     tags: [Sessions]
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: The curation session ID
+   *     responses:
+   *       200:
+   *         description: Images exported to Google Drive successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 folderUrl:
+   *                   type: string
+   *                   format: uri
+   *                   description: URL to the Google Drive folder
+   *                 fileCount:
+   *                   type: integer
+   *                   description: Number of files uploaded
+   *       400:
+   *         description: Session not yet completed
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   *       404:
+   *         description: Session not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   *       500:
+   *         description: Internal server error or Google Drive not connected
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Error'
+   */
+  app.post("/api/sessions/:id/export-drive", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const session = storage.getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      if (session.status !== "completed") {
+        return res.status(400).json({ message: "Session not yet completed" });
+      }
+
+      log(`Starting Google Drive export for session ${req.params.id}`, "routes");
+
+      const driveFiles: Array<{ filename: string; buffer: Buffer; mimeType: string }> = [];
+
+      for (const img of session.curatedImages) {
+        try {
+          const spacesKey = session.spacesKeys.find(k => k.includes(img.id));
+          if (spacesKey) {
+            const buffer = await getFromSpaces(spacesKey);
+            const ext = img.filename.split(".").pop()?.toLowerCase() || "jpg";
+            const mimeMap: Record<string, string> = {
+              jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+              webp: "image/webp", gif: "image/gif", bmp: "image/bmp",
+            };
+            driveFiles.push({
+              filename: img.filename,
+              buffer,
+              mimeType: mimeMap[ext] || "image/jpeg",
+            });
+          }
+        } catch (e: any) {
+          log(`Error fetching ${img.filename} for Drive export: ${e.message}`, "routes");
+        }
+      }
+
+      if (driveFiles.length === 0) {
+        return res.status(500).json({ message: "No images could be retrieved for export" });
+      }
+
+      const folderName = `Currotter - Curated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      const result = await uploadToDrive(driveFiles, folderName);
+
+      log(`Drive export complete: ${result.fileCount} files to ${result.folderUrl}`, "routes");
+
+      return res.json({
+        folderUrl: result.folderUrl,
+        fileCount: result.fileCount,
+      });
+    } catch (err: any) {
+      log(`Drive export error: ${err.message}`, "routes");
       return res.status(500).json({ message: err.message });
     }
   });
