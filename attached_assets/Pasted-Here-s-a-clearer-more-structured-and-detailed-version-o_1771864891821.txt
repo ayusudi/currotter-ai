@@ -1,0 +1,47 @@
+Here’s a clearer, more structured, and detailed version of your prompt:
+
+---
+
+I want to improve the overall UI/UX design of the product to feel more humanized, friendly, and cute, using an otter as the main mascot for **Currotter**.
+
+### Design Goals:
+
+1. **Mascot Enhancement**
+
+   * Use the otter image located at `./clients/public/images/otter-mascot.png` as the base mascot.
+   * Refine and expand the mascot visuals (different poses, expressions, interactions).
+   * Create animated versions of the otter for different states (idle, loading, success, error, welcoming, etc.).
+
+2. **Landing Page**
+
+   * Design a visually appealing and modern landing page.
+   * Add subtle animations featuring the otter (e.g., choosing/uploading photos, waving, reacting to user actions).
+   * Make the hero section engaging and emotionally warm.
+   * Ensure the layout feels clean, playful, and not cluttered.
+
+3. **Login Page**
+
+   * Improve the login page design to feel more friendly and welcoming.
+   * Add small otter animations or illustrations to reduce the “formal” feel.
+   * Maintain clarity and usability while keeping the cute theme consistent.
+
+4. **Dashboard / Home (After Login)**
+
+   * Enhance the dashboard design to be more visually engaging.
+   * Add light, smooth animations (micro-interactions).
+   * Integrate the otter in empty states, tooltips, and onboarding hints.
+
+5. **Loading State (After Upload)**
+
+   * Redesign the loading experience to be cuter and more delightful.
+   * Add an animated otter (e.g., processing, swimming, carrying a photo, thinking).
+   * Make the waiting experience feel fun and less boring.
+
+### Overall Requirements:
+
+* Keep the design modern, clean, and responsive.
+* Use soft color palettes that match a cute, friendly brand identity.
+* Ensure animations are smooth and not distracting.
+* Maintain good UX and accessibility.
+
+The goal is to make Currotter feel alive, warm, and emotionally engaging through the otter mascot and thoughtful animations across all key user flows.

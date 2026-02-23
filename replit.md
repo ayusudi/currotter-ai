@@ -66,6 +66,14 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ## Recent Changes
+- 2026-02-23: Added photo selection explanations:
+  - Each curated photo now includes a `selectionReason` explaining why it was kept
+  - Reasons generated based on aesthetic score, sharpness, lighting, uniqueness, and cluster comparison
+  - Displayed on hover in gallery grid and in lightbox view with Info icon
+- 2026-02-23: Added Terms & Conditions and Privacy Policy pages:
+  - `/terms` and `/privacy` routes accessible regardless of auth state
+  - Footer links on landing page to both legal pages
+  - Covers AI processing, Google Drive integration, data retention, user rights
 - 2026-02-23: Added Google Drive export feature:
   - New "Save to Google Drive" button in results gallery alongside ZIP download
   - POST /api/sessions/:id/export-drive endpoint creates Drive folder and uploads curated photos
