@@ -3,6 +3,7 @@ import { SiGoogle } from "react-icons/si";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Link } from "wouter";
 import heroImage from "@/assets/images/hero-landing.png";
 
 export default function Landing() {
@@ -197,6 +198,10 @@ export default function Landing() {
           <div className="flex items-center gap-2">
             <Camera className="h-5 w-5 text-primary" />
             <span className="font-semibold">Currotter</span>
+          </div>
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <Link href="/terms" className="hover:text-foreground transition-colors" data-testid="link-terms">Terms & Conditions</Link>
+            <Link href="/privacy" className="hover:text-foreground transition-colors" data-testid="link-privacy">Privacy Policy</Link>
           </div>
           <p className="text-sm text-muted-foreground">&copy; 2026 Currotter. All rights reserved.</p>
         </div>

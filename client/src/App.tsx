@@ -8,6 +8,8 @@ import { useAuth } from "@/hooks/use-auth";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Landing from "@/pages/landing";
+import Terms from "@/pages/terms";
+import Privacy from "@/pages/privacy";
 import { Loader2 } from "lucide-react";
 
 function AuthRouter() {
@@ -15,15 +17,23 @@ function AuthRouter() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
+      <Switch>
+        <Route path="/terms" component={Terms} />
+        <Route path="/privacy" component={Privacy} />
+        <Route>
+          <div className="min-h-screen flex items-center justify-center bg-background">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        </Route>
+      </Switch>
     );
   }
 
   if (!isAuthenticated) {
     return (
       <Switch>
+        <Route path="/terms" component={Terms} />
+        <Route path="/privacy" component={Privacy} />
         <Route path="/" component={Landing} />
         <Route component={Landing} />
       </Switch>
@@ -32,6 +42,8 @@ function AuthRouter() {
 
   return (
     <Switch>
+      <Route path="/terms" component={Terms} />
+      <Route path="/privacy" component={Privacy} />
       <Route path="/" component={Home} />
       <Route component={NotFound} />
     </Switch>
