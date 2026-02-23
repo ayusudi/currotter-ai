@@ -9,7 +9,7 @@ interface PipelineProgressProps {
 
 const stages = [
   { id: "filtering", label: "Filtering", description: "Detecting duplicates, blur & brightness", icon: Filter },
-  { id: "analyzing", label: "AI Analysis", description: "Aesthetic scoring via Gradient AI", icon: Brain },
+  { id: "analyzing", label: "AI Analysis", description: "Aesthetic scoring via AI", icon: Brain },
   { id: "deciding", label: "Decision", description: "Clustering & selecting the best", icon: Scale },
   { id: "completed", label: "Complete", description: "Your curated album is ready", icon: CheckCircle2 },
 ];
@@ -37,11 +37,11 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
           <p className="text-sm font-medium" data-testid="text-progress-message">
             {progress.message}
           </p>
-          <span className="text-sm text-muted-foreground tabular-nums">
+          <span className="text-sm text-muted-foreground tabular-nums font-medium">
             {Math.round(overallProgress)}%
           </span>
         </div>
-        <Progress value={overallProgress} className="h-2" data-testid="progress-bar" />
+        <Progress value={overallProgress} className="h-2.5" data-testid="progress-bar" />
       </div>
 
       <div className="grid grid-cols-4 gap-2">
@@ -49,7 +49,6 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
           const isActive = currentStageIndex === idx && !isError;
           const isComplete = currentStageIndex > idx || progress.stage === "completed";
           const isPending = currentStageIndex < idx && !isError;
-          const Icon = stage.icon;
 
           return (
             <motion.div
@@ -57,18 +56,18 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
-              className={`flex flex-col items-center text-center p-3 rounded-md transition-colors ${
+              className={`flex flex-col items-center text-center p-3 rounded-lg transition-all duration-300 ${
                 isActive
-                  ? "bg-primary/10"
+                  ? "bg-primary/10 shadow-sm"
                   : isComplete
                   ? "bg-accent"
                   : "bg-transparent"
               }`}
               data-testid={`stage-${stage.id}`}
             >
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-2 transition-all duration-300 ${
                 isActive
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-primary text-primary-foreground shadow-md"
                   : isComplete
                   ? "bg-primary/20 text-primary"
                   : "bg-muted text-muted-foreground"
@@ -78,7 +77,7 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
                 ) : isComplete ? (
                   <CheckCircle2 className="w-5 h-5" />
                 ) : (
-                  <Icon className="w-5 h-5" />
+                  <stage.icon className="w-5 h-5" />
                 )}
               </div>
               <p className={`text-xs font-medium ${
@@ -98,7 +97,7 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm"
+          className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm"
         >
           <AlertCircle className="w-4 h-4 shrink-0" />
           <p>{progress.message}</p>
@@ -124,7 +123,7 @@ export function PipelineProgress({ progress }: PipelineProgressProps) {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="p-3 rounded-md bg-card border border-card-border text-center">
+    <div className="p-3 rounded-lg bg-card border border-card-border text-center">
       <p className="text-2xl font-bold tabular-nums" data-testid={`stat-${label.toLowerCase().replace(/\s+/g, '-')}`}>
         {value}
       </p>

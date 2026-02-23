@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Wand2, ArrowRight, RotateCcw, LogOut, User } from "lucide-react";
+import { Wand2, ArrowRight, RotateCcw, LogOut, User, Search, Sparkles, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -244,7 +244,15 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-8"
           >
-            <div className="text-center space-y-3 max-w-2xl mx-auto">
+            <div className="text-center space-y-4 max-w-2xl mx-auto">
+              <motion.img
+                src="/images/otter-welcome.png"
+                alt="Otter waving"
+                className="w-20 h-20 mx-auto"
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", bounce: 0.5 }}
+              />
               <motion.div
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -255,17 +263,20 @@ export default function Home() {
                 AI-Powered Photo Curation
               </motion.div>
               <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-                Keep the best, ditch the rest
+                Let's curate your photos!
               </h2>
               <p className="text-muted-foreground text-base leading-relaxed">
-                Upload your event photos and let our AI agents find duplicates, remove blurry shots, 
-                and pick the best photos from each scene. Get a perfectly curated album in seconds.
+                Upload your event photos and our friendly otter will find duplicates, remove blurry shots,
+                and pick the best photos from each scene.
               </p>
             </div>
 
             <Card className="p-6 space-y-6 max-w-2xl mx-auto border-card-border">
               <div>
-                <h3 className="text-sm font-medium mb-3">1. Upload your photos</h3>
+                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">1</span>
+                  Upload your photos
+                </h3>
                 <UploadZone
                   onFilesSelected={handleFilesSelected}
                   isUploading={isUploading}
@@ -276,7 +287,10 @@ export default function Home() {
               </div>
 
               <div>
-                <h3 className="text-sm font-medium mb-3">2. Choose curation mode</h3>
+                <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">2</span>
+                  Choose curation mode
+                </h3>
                 <ModeSelector mode={mode} onModeChange={setMode} disabled={isUploading} />
               </div>
 
@@ -295,18 +309,19 @@ export default function Home() {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto">
               {[
-                { title: "Detect Duplicates", desc: "Perceptual hashing finds near-identical shots" },
-                { title: "AI Scoring", desc: "Gradient AI rates aesthetics & scene quality" },
-                { title: "Smart Clusters", desc: "Cosine similarity groups similar photos" },
+                { title: "Detect Duplicates", desc: "Perceptual hashing finds near-identical shots", featureIcon: Search },
+                { title: "AI Scoring", desc: "AI rates aesthetics & scene quality", featureIcon: Sparkles },
+                { title: "Smart Clusters", desc: "Cosine similarity groups similar photos", featureIcon: Trophy },
               ].map((feature, idx) => (
                 <motion.div
                   key={feature.title}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 + idx * 0.1 }}
-                  className="p-4 rounded-md bg-card border border-card-border text-center"
+                  className="p-4 rounded-lg bg-card border border-card-border text-center hover:shadow-md transition-shadow duration-300"
                 >
-                  <p className="font-medium text-sm">{feature.title}</p>
+                  <feature.featureIcon className="w-5 h-5 text-primary" />
+                  <p className="font-medium text-sm mt-2">{feature.title}</p>
                   <p className="text-xs text-muted-foreground mt-1">{feature.desc}</p>
                 </motion.div>
               ))}
@@ -320,10 +335,18 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             className="max-w-2xl mx-auto space-y-6"
           >
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight">Processing your photos</h2>
+            <div className="text-center space-y-4">
+              <motion.img
+                src="/images/otter-processing.png"
+                alt="Otter processing"
+                className="w-28 h-28 mx-auto animate-swim"
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", bounce: 0.4 }}
+              />
+              <h2 className="text-2xl font-bold tracking-tight">Our otter is working on it!</h2>
               <p className="text-muted-foreground text-sm">
-                Our AI agents are analyzing your collection...
+                Analyzing your collection and picking the best shots...
               </p>
             </div>
             <Card className="p-6 border-card-border">
@@ -338,6 +361,17 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
+            <div className="text-center space-y-2">
+              <motion.img
+                src="/images/otter-success.png"
+                alt="Otter celebrating"
+                className="w-20 h-20 mx-auto animate-bounce-gentle"
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", bounce: 0.5 }}
+              />
+              <h2 className="text-xl font-bold">Your curated album is ready!</h2>
+            </div>
             {currentProgress?.stats && (
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <StatBadge label="Uploaded" value={selectedFiles.length} />
@@ -364,7 +398,7 @@ export default function Home() {
 
 function StatBadge({ label, value, color }: { label: string; value: number; color?: string }) {
   return (
-    <div className="p-3 rounded-md bg-card border border-card-border text-center">
+    <div className="p-3 rounded-lg bg-card border border-card-border text-center">
       <p className={`text-xl font-bold tabular-nums ${color || ""}`}>{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>

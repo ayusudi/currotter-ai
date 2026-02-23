@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Upload, ImagePlus, X } from "lucide-react";
+import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -48,10 +48,10 @@ export function UploadZone({ onFilesSelected, isUploading, selectedFiles, onRemo
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative border-2 border-dashed rounded-md p-12 text-center transition-colors cursor-pointer ${
+        className={`relative border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer ${
           isDragOver
-            ? "border-primary bg-primary/5"
-            : "border-muted-foreground/25 hover:border-primary/50"
+            ? "border-primary bg-primary/5 scale-[1.02]"
+            : "border-muted-foreground/25 hover:border-primary/50 hover:bg-primary/[0.02]"
         } ${isUploading ? "pointer-events-none opacity-60" : ""}`}
         onClick={() => document.getElementById("file-input")?.click()}
         whileHover={{ scale: 1.005 }}
@@ -66,13 +66,17 @@ export function UploadZone({ onFilesSelected, isUploading, selectedFiles, onRemo
           onChange={handleFileInput}
           data-testid="input-file-upload"
         />
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-            <ImagePlus className="w-8 h-8 text-primary" />
-          </div>
+        <div className="flex flex-col items-center gap-3">
+          <motion.img
+            src="/images/otter-upload.png"
+            alt="Upload photos"
+            className="w-20 h-20"
+            animate={isDragOver ? { scale: 1.1, rotate: 5 } : { scale: 1, rotate: 0 }}
+            transition={{ type: "spring", bounce: 0.4 }}
+          />
           <div>
             <p className="text-lg font-medium">
-              Drop your photos here
+              {isDragOver ? "Drop them here!" : "Drop your photos here"}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               or click to browse. Supports JPG, PNG, WEBP
@@ -108,7 +112,7 @@ export function UploadZone({ onFilesSelected, isUploading, selectedFiles, onRemo
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
-                  className="relative group aspect-square rounded-md overflow-hidden bg-muted"
+                  className="relative group aspect-square rounded-lg overflow-hidden bg-muted"
                 >
                   <img
                     src={URL.createObjectURL(file)}
