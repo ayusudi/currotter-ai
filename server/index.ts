@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { setupSwagger } from "./swagger";
+import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { createServer } from "http";
 
 const app = express();
@@ -62,6 +63,8 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await setupAuth(app);
+  registerAuthRoutes(app);
   setupSwagger(app);
   await registerRoutes(httpServer, app);
 

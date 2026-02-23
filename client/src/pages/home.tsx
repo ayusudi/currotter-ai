@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Wand2, ArrowRight, RotateCcw } from "lucide-react";
+import { Wand2, ArrowRight, RotateCcw, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -10,6 +10,7 @@ import { PipelineProgress } from "@/components/pipeline-progress";
 import { ResultsGallery } from "@/components/results-gallery";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { useAuth } from "@/hooks/use-auth";
 import type { ImageAnalysis, ProgressUpdate } from "@shared/schema";
 
 type AppState = "upload" | "processing" | "results";
@@ -25,6 +26,7 @@ export default function Home() {
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const { toast } = useToast();
   const fetchedRef = useRef(false);
+  const { user } = useAuth();
 
   const { progress: wsProgress } = useWebSocket(sessionId);
 
@@ -185,7 +187,7 @@ export default function Home() {
               <p className="text-[11px] text-muted-foreground">AI Photo Curator</p>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {appState === "results" && (
               <Button variant="ghost" size="sm" onClick={handleReset} data-testid="button-new-session">
                 <RotateCcw className="w-4 h-4 mr-1" />
@@ -193,6 +195,19 @@ export default function Home() {
               </Button>
             )}
             <ThemeToggle />
+            {user && (
+              <div className="flex items-center gap-2 ml-2 pl-2 border-l">
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="text-username">
+                  <User className="h-4 w-4" />
+                  <span className="hidden sm:inline max-w-[120px] truncate">{user.firstName || user.email}</span>
+                </div>
+                <a href="/api/logout">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-logout">
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                </a>
+              </div>
+            )}
           </div>
         </div>
       </header>

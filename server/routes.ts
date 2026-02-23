@@ -10,6 +10,7 @@ import { filterImages } from "./agents/filtering";
 import { analyzeImages } from "./agents/analysis";
 import { makeDecisions } from "./agents/decision";
 import { log } from "./index";
+import { isAuthenticated } from "./replit_integrations/auth";
 import type { ImageAnalysis } from "@shared/schema";
 
 const upload = multer({
@@ -235,7 +236,7 @@ export async function registerRoutes(
    *             schema:
    *               $ref: '#/components/schemas/Error'
    */
-  app.post("/api/curate", upload.array("images", 50), async (req: Request, res: Response) => {
+  app.post("/api/curate", isAuthenticated, upload.array("images", 50), async (req: Request, res: Response) => {
     try {
       const files = req.files as Express.Multer.File[];
       if (!files || files.length < 2) {
@@ -295,7 +296,7 @@ export async function registerRoutes(
    *             schema:
    *               $ref: '#/components/schemas/Error'
    */
-  app.get("/api/sessions/:id", (req: Request, res: Response) => {
+  app.get("/api/sessions/:id", isAuthenticated, (req: Request, res: Response) => {
     const session = storage.getSession(req.params.id);
     if (!session) {
       return res.status(404).json({ message: "Session not found" });
@@ -347,7 +348,7 @@ export async function registerRoutes(
    *             schema:
    *               $ref: '#/components/schemas/Error'
    */
-  app.get("/api/sessions/:id/download", async (req: Request, res: Response) => {
+  app.get("/api/sessions/:id/download", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const session = storage.getSession(req.params.id);
       if (!session) {

@@ -64,5 +64,4 @@ export const progressUpdateSchema = z.object({
 
 export type ProgressUpdate = z.infer<typeof progressUpdateSchema>;
 
-export type InsertUser = { username: string; password: string };
-export type User = { id: string; username: string; password: string };
+export * from "./models/auth";
