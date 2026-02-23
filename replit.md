@@ -53,4 +53,10 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ## Recent Changes
+- 2026-02-23: Fixed duplicate detection and similarity clustering algorithms:
+  - Perceptual hash Hamming distance now operates at bit level (was comparing hex chars)
+  - Duplicate detection uses canonical representative tracking to properly handle replacement
+  - Image embeddings now use color histograms + 4x4 spatial features + HSL averages (was sampling raw JPEG bytes)
+  - Clustering thresholds tuned: Social 0.90, Minimal 0.80 cosine similarity
+  - Added comprehensive logging throughout the pipeline
 - 2026-02-21: Initial MVP implementation with full AI pipeline, upload UI, processing visualization, and results gallery

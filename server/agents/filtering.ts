@@ -28,13 +28,22 @@ function computePerceptualHash(buffer: Buffer): Promise<string> {
   });
 }
 
+function hexToBinary(hex: string): string {
+  return hex
+    .split("")
+    .map((c) => parseInt(c, 16).toString(2).padStart(4, "0"))
+    .join("");
+}
+
 function hammingDistance(hash1: string, hash2: string): number {
+  const bin1 = hexToBinary(hash1);
+  const bin2 = hexToBinary(hash2);
   let distance = 0;
-  const minLen = Math.min(hash1.length, hash2.length);
+  const minLen = Math.min(bin1.length, bin2.length);
   for (let i = 0; i < minLen; i++) {
-    if (hash1[i] !== hash2[i]) distance++;
+    if (bin1[i] !== bin2[i]) distance++;
   }
-  return distance + Math.abs(hash1.length - hash2.length);
+  return distance + Math.abs(bin1.length - bin2.length);
 }
 
 async function computeBlurScore(buffer: Buffer): Promise<number> {
@@ -84,7 +93,7 @@ async function computeBrightness(buffer: Buffer): Promise<number> {
   return totalBrightness / pixelCount / 255;
 }
 
-const DUPLICATE_THRESHOLD = 10;
+const DUPLICATE_THRESHOLD = 30;
 const BLUR_THRESHOLD = 100;
 const BRIGHTNESS_LOW = 0.08;
 const BRIGHTNESS_HIGH = 0.95;
@@ -96,6 +105,7 @@ export async function filterImages(
   log(`Filtering Agent: Processing ${images.length} images`, "filter-agent");
 
   const results: FilterResult[] = [];
+  const canonicalReps: Array<{ index: number; hash: string; blurScore: number }> = [];
   let duplicatesRemoved = 0;
   let blurryRemoved = 0;
   let lowBrightnessRemoved = 0;
@@ -114,22 +124,41 @@ export async function filterImages(
       ]);
 
       let isDuplicate = false;
-      for (const prev of results) {
-        if (!prev.isDuplicate) {
-          const dist = hammingDistance(hash, prev.perceptualHash);
-          if (dist < DUPLICATE_THRESHOLD) {
+      let matchedCanonicalIdx = -1;
+      let bestDistance = Infinity;
+
+      if (!hash.startsWith("fallback_")) {
+        for (let c = 0; c < canonicalReps.length; c++) {
+          const canon = canonicalReps[c];
+          const dist = hammingDistance(hash, canon.hash);
+          if (dist < DUPLICATE_THRESHOLD && dist < bestDistance) {
+            bestDistance = dist;
             isDuplicate = true;
-            break;
+            matchedCanonicalIdx = c;
           }
         }
+      }
+
+      if (isDuplicate && matchedCanonicalIdx >= 0) {
+        const canon = canonicalReps[matchedCanonicalIdx];
+        if (blurScore > canon.blurScore) {
+          log(`  Replacing ${results[canon.index].filename} with sharper duplicate ${img.filename} (blur: ${blurScore.toFixed(1)} vs ${canon.blurScore.toFixed(1)}, hamming: ${bestDistance})`, "filter-agent");
+          results[canon.index].isDuplicate = true;
+          isDuplicate = false;
+          canon.index = results.length;
+          canon.hash = hash;
+          canon.blurScore = blurScore;
+        }
+        duplicatesRemoved++;
+      } else if (!hash.startsWith("fallback_")) {
+        canonicalReps.push({ index: results.length, hash, blurScore });
       }
 
       const isBlurry = blurScore < BLUR_THRESHOLD;
       const isTooLow = brightnessScore < BRIGHTNESS_LOW || brightnessScore > BRIGHTNESS_HIGH;
 
-      if (isDuplicate) duplicatesRemoved++;
-      if (isBlurry) blurryRemoved++;
-      if (isTooLow) lowBrightnessRemoved++;
+      if (isBlurry && !isDuplicate) blurryRemoved++;
+      if (isTooLow && !isDuplicate && !isBlurry) lowBrightnessRemoved++;
 
       results.push({
         id: img.id,
@@ -143,7 +172,7 @@ export async function filterImages(
         buffer: img.buffer,
       });
 
-      log(`  [${i + 1}/${images.length}] ${img.filename}: blur=${blurScore.toFixed(1)}, bright=${brightnessScore.toFixed(3)}, dup=${isDuplicate}, blurry=${isBlurry}`, "filter-agent");
+      log(`  [${i + 1}/${images.length}] ${img.filename}: blur=${blurScore.toFixed(1)}, bright=${brightnessScore.toFixed(3)}, dup=${isDuplicate}${isDuplicate ? ` (dist=${bestDistance})` : ""}, blurry=${isBlurry}, hash=${hash.substring(0, 8)}...`, "filter-agent");
     } catch (err: any) {
       log(`  Error processing ${img.filename}: ${err.message}`, "filter-agent");
     }

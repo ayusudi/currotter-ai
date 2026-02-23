@@ -39,9 +39,12 @@ function clusterImages(
   const clusters = new Map<string, number>();
   let nextClusterId = 0;
 
+  log(`  Clustering ${images.length} images with similarity threshold ${similarityThreshold}`, "decision-agent");
+
   for (const img of images) {
     let assignedCluster = -1;
     let maxSimilarity = 0;
+    let bestMatchId = "";
 
     for (const other of images) {
       if (other.id === img.id) continue;
@@ -52,6 +55,7 @@ function clusterImages(
       if (sim > similarityThreshold && sim > maxSimilarity) {
         maxSimilarity = sim;
         assignedCluster = existingCluster;
+        bestMatchId = other.id;
       }
     }
 
@@ -59,6 +63,7 @@ function clusterImages(
       clusters.set(img.id, nextClusterId++);
     } else {
       clusters.set(img.id, assignedCluster);
+      log(`  Merged image into cluster ${assignedCluster} (similarity=${maxSimilarity.toFixed(4)} with ${bestMatchId.substring(0, 8)}...)`, "decision-agent");
     }
   }
 
@@ -101,13 +106,15 @@ export function makeDecisions(
 
   const analysisMap = new Map(analysisResults.map(a => [a.id, a]));
 
-  const similarityThreshold = mode === "social" ? 0.85 : 0.7;
+  const similarityThreshold = mode === "social" ? 0.90 : 0.80;
+
+  const embeddingSize = analysisResults.length > 0 ? analysisResults[0].embedding.length : 76;
 
   const imageEmbeddings = filterResults.map(f => {
     const analysis = analysisMap.get(f.id);
     return {
       id: f.id,
-      embedding: analysis?.embedding || new Array(64).fill(0),
+      embedding: analysis?.embedding || new Array(embeddingSize).fill(0),
     };
   });
 
@@ -116,29 +123,40 @@ export function makeDecisions(
   log(`  Found ${new Set(clusters.values()).size} clusters`, "decision-agent");
 
   const clusterGroups = new Map<number, Array<{ id: string; index: number }>>();
-  filterResults.forEach((f, idx) => {
-    const clusterId = clusters.get(f.id) || 0;
-    if (!clusterGroups.has(clusterId)) clusterGroups.set(clusterId, []);
-    clusterGroups.get(clusterId)!.push({ id: f.id, index: idx });
+  filterResults.forEach((f: FilterResult, idx: number) => {
+    const clusterId = clusters.get(f.id) ?? 0;
+    const group = clusterGroups.get(clusterId);
+    if (group) {
+      group.push({ id: f.id, index: idx });
+    } else {
+      clusterGroups.set(clusterId, [{ id: f.id, index: idx }]);
+    }
   });
 
+  const clusterEntries = Array.from(clusterGroups.entries());
+
+  for (const [clusterId, members] of clusterEntries) {
+    const filenames = members.map((m: { id: string; index: number }) => filterResults[m.index].filename);
+    log(`  Cluster ${clusterId}: ${members.length} images [${filenames.join(", ")}]`, "decision-agent");
+  }
+
   const uniquenessScores = new Map<string, number>();
-  for (const [clusterId, members] of clusterGroups) {
+  for (const [_clusterId, members] of clusterEntries) {
     const uniqueness = 1 / Math.sqrt(members.length);
     for (const m of members) {
       uniquenessScores.set(m.id, uniqueness);
     }
   }
 
-  const scored: ScoredImage[] = filterResults.map(f => {
+  const scored: ScoredImage[] = filterResults.map((f: FilterResult) => {
     const analysis = analysisMap.get(f.id);
-    const clusterId = clusters.get(f.id) || 0;
-    const uniqueness = uniquenessScores.get(f.id) || 1;
+    const clusterId = clusters.get(f.id) ?? 0;
+    const uniqueness = uniquenessScores.get(f.id) ?? 1;
 
     const finalScore = computeWeightedScore(
       f.blurScore,
       f.brightnessScore,
-      analysis?.aestheticScore || 0.5,
+      analysis?.aestheticScore ?? 0.5,
       uniqueness,
       mode
     );
@@ -151,28 +169,32 @@ export function makeDecisions(
       isSelected: false,
       blurScore: f.blurScore,
       brightnessScore: f.brightnessScore,
-      aestheticScore: analysis?.aestheticScore || 0.5,
-      sceneDescription: analysis?.sceneDescription || "",
-      embedding: analysis?.embedding || [],
+      aestheticScore: analysis?.aestheticScore ?? 0.5,
+      sceneDescription: analysis?.sceneDescription ?? "",
+      embedding: analysis?.embedding ?? [],
     };
   });
 
   const selectionsPerCluster = mode === "social" ? 2 : 1;
 
-  for (const [clusterId, members] of clusterGroups) {
+  for (const [clusterId, members] of clusterEntries) {
     const clusterScored = members
-      .map(m => scored.find(s => s.id === m.id)!)
+      .map((m: { id: string; index: number }) => scored.find((s: ScoredImage) => s.id === m.id)!)
       .filter(Boolean)
-      .sort((a, b) => b.finalScore - a.finalScore);
+      .sort((a: ScoredImage, b: ScoredImage) => b.finalScore - a.finalScore);
 
     const toSelect = Math.min(selectionsPerCluster, clusterScored.length);
     for (let i = 0; i < toSelect; i++) {
       clusterScored[i].isSelected = true;
     }
+
+    if (clusterScored.length > 1) {
+      log(`  Cluster ${clusterId}: selected ${toSelect}/${clusterScored.length} (best: ${clusterScored[0].filename} score=${clusterScored[0].finalScore.toFixed(3)})`, "decision-agent");
+    }
   }
 
-  const selected = scored.filter(s => s.isSelected);
-  log(`Decision Agent: Selected ${selected.length}/${scored.length} images`, "decision-agent");
+  const selected = scored.filter((s: ScoredImage) => s.isSelected);
+  log(`Decision Agent: Selected ${selected.length}/${scored.length} images across ${clusterEntries.length} clusters`, "decision-agent");
 
   return scored;
 }

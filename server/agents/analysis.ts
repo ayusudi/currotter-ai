@@ -94,27 +94,98 @@ Scoring criteria:
   }
 }
 
-function generateSimpleEmbedding(buffer: Buffer, aestheticScore: number): number[] {
-  const embedding = new Array(64).fill(0);
+async function generateVisualEmbedding(
+  buffer: Buffer,
+  aestheticScore: number,
+  sceneDescription: string
+): Promise<number[]> {
+  const sharpModule = (await import("sharp")).default;
+  const { data, info } = await sharpModule(buffer)
+    .resize(64, 64, { fit: "cover" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  const sampleSize = Math.min(buffer.length, 4096);
-  const step = Math.max(1, Math.floor(buffer.length / sampleSize));
+  const width = info.width;
+  const height = info.height;
+  const channels = info.channels;
 
-  for (let i = 0; i < sampleSize && i * step < buffer.length; i++) {
-    const idx = i % 64;
-    embedding[idx] += buffer[i * step] / 255;
+  const colorHistR = new Array(8).fill(0);
+  const colorHistG = new Array(8).fill(0);
+  const colorHistB = new Array(8).fill(0);
+
+  const gridSize = 4;
+  const cellW = Math.floor(width / gridSize);
+  const cellH = Math.floor(height / gridSize);
+  const spatialColors = new Array(gridSize * gridSize * 3).fill(0);
+  const spatialCounts = new Array(gridSize * gridSize).fill(0);
+
+  let totalH = 0, totalS = 0, totalL = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * channels;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      colorHistR[Math.min(7, Math.floor(r / 32))]++;
+      colorHistG[Math.min(7, Math.floor(g / 32))]++;
+      colorHistB[Math.min(7, Math.floor(b / 32))]++;
+
+      const cellX = Math.min(gridSize - 1, Math.floor(x / cellW));
+      const cellY = Math.min(gridSize - 1, Math.floor(y / cellH));
+      const cellIdx = cellY * gridSize + cellX;
+      spatialColors[cellIdx * 3] += r;
+      spatialColors[cellIdx * 3 + 1] += g;
+      spatialColors[cellIdx * 3 + 2] += b;
+      spatialCounts[cellIdx]++;
+
+      const rn = r / 255, gn = g / 255, bn = b / 255;
+      const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+      totalL += (max + min) / 2;
+      totalS += max === 0 ? 0 : (max - min) / max;
+      let h = 0;
+      if (max !== min) {
+        const d = max - min;
+        if (max === rn) h = ((gn - bn) / d + 6) % 6;
+        else if (max === gn) h = (bn - rn) / d + 2;
+        else h = (rn - gn) / d + 4;
+        h /= 6;
+      }
+      totalH += h;
+    }
   }
 
-  const samplesPerBin = Math.ceil(sampleSize / 64);
-  for (let i = 0; i < 64; i++) {
-    embedding[i] = embedding[i] / samplesPerBin;
+  const totalPixels = width * height;
+  for (let i = 0; i < 8; i++) {
+    colorHistR[i] /= totalPixels;
+    colorHistG[i] /= totalPixels;
+    colorHistB[i] /= totalPixels;
   }
 
-  embedding[0] = aestheticScore;
+  for (let i = 0; i < gridSize * gridSize; i++) {
+    if (spatialCounts[i] > 0) {
+      spatialColors[i * 3] = spatialColors[i * 3] / spatialCounts[i] / 255;
+      spatialColors[i * 3 + 1] = spatialColors[i * 3 + 1] / spatialCounts[i] / 255;
+      spatialColors[i * 3 + 2] = spatialColors[i * 3 + 2] / spatialCounts[i] / 255;
+    }
+  }
+
+  const embedding: number[] = [
+    ...colorHistR,
+    ...colorHistG,
+    ...colorHistB,
+    ...spatialColors,
+    totalH / totalPixels,
+    totalS / totalPixels,
+    totalL / totalPixels,
+    aestheticScore,
+  ];
 
   const magnitude = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
   if (magnitude > 0) {
-    for (let i = 0; i < 64; i++) {
+    for (let i = 0; i < embedding.length; i++) {
       embedding[i] /= magnitude;
     }
   }
@@ -156,7 +227,7 @@ export async function analyzeImages(
 
     const { aestheticScore, sceneDescription } = await analyzeImageWithGradient(base64, img.filename);
 
-    const embedding = generateSimpleEmbedding(resizedBuffer, aestheticScore);
+    const embedding = await generateVisualEmbedding(img.buffer, aestheticScore, sceneDescription);
 
     processed++;
     onProgress?.(processed);
