@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Wand2, ArrowRight, RotateCcw, LogOut, User, Search, Sparkles, Trophy } from "lucide-react";
+import { Wand2, ArrowRight, RotateCcw, LogOut, User, Search, Sparkles, Trophy, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
@@ -13,7 +13,7 @@ import { useWebSocket } from "@/hooks/use-websocket";
 import { useAuth } from "@/hooks/use-auth";
 import type { ImageAnalysis, ProgressUpdate } from "@shared/schema";
 
-type AppState = "upload" | "processing" | "results";
+type AppState = "upload" | "processing" | "results" | "error";
 
 export default function Home() {
   const [appState, setAppState] = useState<AppState>("upload");
@@ -25,19 +25,27 @@ export default function Home() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isExportingDrive, setIsExportingDrive] = useState(false);
   const [driveExportUrl, setDriveExportUrl] = useState<string | null>(null);
-  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [pollingProgress, setPollingProgress] = useState<ProgressUpdate | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const { toast } = useToast();
-  const fetchedRef = useRef(false);
   const { user } = useAuth();
+  const fetchedRef = useRef(false);
+  const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { progress: wsProgress } = useWebSocket(sessionId);
+  const { progress: wsProgress, isConnected: wsConnected } = useWebSocket(sessionId);
 
-  const currentProgress = wsProgress || progress;
+  const currentProgress = wsProgress || pollingProgress;
 
   useEffect(() => {
-    if (wsProgress && wsProgress.stage === "completed" && appState === "processing" && sessionId && !fetchedRef.current) {
+    if (!wsProgress) return;
+    if (wsProgress.stage === "completed" && appState === "processing" && sessionId && !fetchedRef.current) {
       fetchedRef.current = true;
       fetchResults(sessionId);
+    }
+    if (wsProgress.stage === "error" && appState === "processing") {
+      setErrorMessage(wsProgress.message || "Processing failed");
+      setAppState("error");
     }
   }, [wsProgress, appState, sessionId]);
 
@@ -48,17 +56,75 @@ export default function Home() {
         const data = await res.json();
         if (data.curatedImages && data.curatedImages.length > 0) {
           setCuratedImages(data.curatedImages);
-          setProgress(wsProgress);
+          setPollingProgress(prev => prev ? { ...prev, stats: data.stats } : null);
           setAppState("results");
         }
       }
-    } catch (e) {
-      // ignore
+    } catch {
+      // ignore — polling fallback will handle it
     }
   }
 
+  function startPollingFallback(sid: string) {
+    let attempts = 0;
+    const maxAttempts = 120;
+
+    const poll = async () => {
+      if (attempts >= maxAttempts) {
+        setErrorMessage("Processing took too long. Please try again.");
+        setAppState("error");
+        return;
+      }
+      attempts++;
+
+      try {
+        const res = await fetch(`/api/sessions/${sid}`);
+        if (!res.ok) {
+          pollingRef.current = setTimeout(poll, 2000);
+          return;
+        }
+        const data = await res.json();
+
+        setPollingProgress({
+          sessionId: sid,
+          stage: data.status,
+          progress: data.status === "completed" ? 100 : Math.min(90, (data.processedImages / Math.max(1, data.totalImages)) * 100),
+          message: getStatusMessage(data.status, data.processedImages, data.totalImages),
+          stats: data.stats,
+        });
+
+        if (data.status === "completed") {
+          setCuratedImages(data.curatedImages || []);
+          setAppState("results");
+          return;
+        }
+
+        if (data.status === "error") {
+          setErrorMessage(data.error || "Something went wrong during processing");
+          setAppState("error");
+          return;
+        }
+      } catch {
+        // network error — keep trying
+      }
+
+      pollingRef.current = setTimeout(poll, 2000);
+    };
+
+    pollingRef.current = setTimeout(poll, 2000);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearTimeout(pollingRef.current);
+    };
+  }, []);
+
   const handleFilesSelected = useCallback((files: File[]) => {
-    setSelectedFiles(prev => [...prev, ...files]);
+    setSelectedFiles(prev => {
+      const combined = [...prev, ...files];
+      return combined.slice(0, 50);
+    });
   }, []);
 
   const handleRemoveFile = useCallback((index: number) => {
@@ -75,9 +141,13 @@ export default function Home() {
       return;
     }
 
+    if (pollingRef.current) clearTimeout(pollingRef.current);
+    fetchedRef.current = false;
+
     setIsUploading(true);
     setAppState("processing");
-    setProgress({ sessionId: "", stage: "uploading", progress: 0, message: "Uploading photos..." });
+    setPollingProgress({ sessionId: "", stage: "uploading", progress: 0, message: "Uploading photos..." });
+    setErrorMessage(null);
 
     try {
       const formData = new FormData();
@@ -96,55 +166,22 @@ export default function Home() {
 
       const data = await res.json();
       setSessionId(data.sessionId);
+      setPollingProgress({
+        sessionId: data.sessionId,
+        stage: "filtering",
+        progress: 10,
+        message: "Photos uploaded. Processing started...",
+      });
 
-      pollForResults(data.sessionId);
+      if (!wsConnected) {
+        startPollingFallback(data.sessionId);
+      }
     } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-      setAppState("upload");
-      setProgress(null);
+      setErrorMessage(err.message || "Upload failed");
+      setAppState("error");
     } finally {
       setIsUploading(false);
     }
-  };
-
-  const pollForResults = async (sid: string) => {
-    const maxAttempts = 120;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-
-      try {
-        const res = await fetch(`/api/sessions/${sid}`);
-        if (!res.ok) continue;
-        const data = await res.json();
-
-        setProgress({
-          sessionId: sid,
-          stage: data.status,
-          progress: data.status === "completed" ? 100 : Math.min(95, (data.processedImages / Math.max(1, data.totalImages)) * 100),
-          message: getStatusMessage(data.status, data.processedImages, data.totalImages),
-          stats: data.stats,
-        });
-
-        if (data.status === "completed") {
-          setCuratedImages(data.curatedImages || []);
-          setAppState("results");
-          return;
-        }
-
-        if (data.status === "error") {
-          toast({ title: "Processing Error", description: data.error || "Something went wrong", variant: "destructive" });
-          setAppState("upload");
-          setProgress(null);
-          return;
-        }
-      } catch (e) {
-        // continue polling
-      }
-    }
-
-    toast({ title: "Timeout", description: "Processing took too long. Please try again.", variant: "destructive" });
-    setAppState("upload");
-    setProgress(null);
   };
 
   const handleDownloadZip = async () => {
@@ -192,12 +229,14 @@ export default function Home() {
   };
 
   const handleReset = () => {
+    if (pollingRef.current) clearTimeout(pollingRef.current);
     setAppState("upload");
     setSelectedFiles([]);
     setSessionId(null);
     setCuratedImages([]);
-    setProgress(null);
+    setPollingProgress(null);
     setDriveExportUrl(null);
+    setErrorMessage(null);
     fetchedRef.current = false;
   };
 
@@ -213,7 +252,7 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {appState === "results" && (
+            {(appState === "results" || appState === "error") && (
               <Button variant="ghost" size="sm" onClick={handleReset} data-testid="button-new-session">
                 <RotateCcw className="w-4 h-4 mr-1" />
                 New
@@ -320,7 +359,7 @@ export default function Home() {
                   transition={{ delay: 0.2 + idx * 0.1 }}
                   className="p-4 rounded-lg bg-card border border-card-border text-center hover:shadow-md transition-shadow duration-300"
                 >
-                  <feature.featureIcon className="w-5 h-5 text-primary" />
+                  <feature.featureIcon className="w-5 h-5 text-primary mx-auto" />
                   <p className="font-medium text-sm mt-2">{feature.title}</p>
                   <p className="text-xs text-muted-foreground mt-1">{feature.desc}</p>
                 </motion.div>
@@ -352,6 +391,26 @@ export default function Home() {
             <Card className="p-6 border-card-border">
               <PipelineProgress progress={currentProgress} />
             </Card>
+          </motion.div>
+        )}
+
+        {appState === "error" && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-lg mx-auto text-center space-y-6"
+          >
+            <AlertCircle className="w-16 h-16 text-destructive mx-auto" />
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold">Something went wrong</h2>
+              <p className="text-muted-foreground text-sm">
+                {errorMessage || "An unexpected error occurred during processing."}
+              </p>
+            </div>
+            <Button onClick={handleReset} data-testid="button-try-again">
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Try Again
+            </Button>
           </motion.div>
         )}
 
@@ -398,7 +457,7 @@ export default function Home() {
 
 function StatBadge({ label, value, color }: { label: string; value: number; color?: string }) {
   return (
-    <div className="p-3 rounded-lg bg-card border border-card-border text-center">
+    <div className="p-3 rounded-lg bg-card border border-card-border text-center" data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}>
       <p className={`text-xl font-bold tabular-nums ${color || ""}`}>{value}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>

@@ -66,6 +66,20 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ## Recent Changes
+- 2026-03-13: Architecture & feature improvements:
+  - Fixed 5 TypeScript errors in server/routes.ts (Set/Map iteration + params type narrowing)
+  - Fixed URL.createObjectURL memory leak in upload-zone.tsx (object URLs now tracked and revoked on unmount/clear)
+  - Removed redundant dual-progress system: WebSocket is now primary; polling only activates as fallback when WS unavailable
+  - Added dedicated error state (AppState "error") in home.tsx with descriptive message and "Try Again" button
+  - Upload zone improvements: file size display per image, total size counter, slots-remaining warning, 50-file cap enforcement
+  - Results gallery improvements:
+    - Keyboard navigation in lightbox (← → arrow keys, Escape to close)
+    - Gallery sorted by score (best photos first) with a sort toggle (By Score / A-Z)
+    - "Best" badge on highest-scoring photo
+    - Scene description shown in lightbox (from AI analysis)
+    - Individual photo download button in lightbox
+    - Aesthetic score shown alongside composite score in lightbox
+    - Navigation keyboard hint overlay in lightbox
 - 2026-02-23: Added photo selection explanations:
   - Each curated photo now includes a `selectionReason` explaining why it was kept
   - Reasons generated based on aesthetic score, sharpness, lighting, uniqueness, and cluster comparison

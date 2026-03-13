@@ -136,7 +136,7 @@ function broadcastProgress(sessionId: string, payload: any) {
   const subs = sessionSubscribers.get(sessionId);
   if (!subs) return;
   const msg = JSON.stringify({ type: "progress", payload });
-  for (const ws of subs) {
+  for (const ws of Array.from(subs)) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(msg);
     }
@@ -166,7 +166,7 @@ export async function registerRoutes(
     });
 
     ws.on("close", () => {
-      for (const [, subs] of sessionSubscribers) {
+      for (const [, subs] of Array.from(sessionSubscribers)) {
         subs.delete(ws);
       }
     });
@@ -298,7 +298,7 @@ export async function registerRoutes(
    *               $ref: '#/components/schemas/Error'
    */
   app.get("/api/sessions/:id", isAuthenticated, (req: Request, res: Response) => {
-    const session = storage.getSession(req.params.id);
+    const session = storage.getSession(req.params["id"] as string);
     if (!session) {
       return res.status(404).json({ message: "Session not found" });
     }
@@ -351,7 +351,7 @@ export async function registerRoutes(
    */
   app.get("/api/sessions/:id/download", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const session = storage.getSession(req.params.id);
+      const session = storage.getSession(req.params["id"] as string);
       if (!session) {
         return res.status(404).json({ message: "Session not found" });
       }
@@ -437,7 +437,8 @@ export async function registerRoutes(
    */
   app.post("/api/sessions/:id/export-drive", isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const session = storage.getSession(req.params.id);
+      const sessionId = req.params["id"] as string;
+      const session = storage.getSession(sessionId);
       if (!session) {
         return res.status(404).json({ message: "Session not found" });
       }
@@ -445,7 +446,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Session not yet completed" });
       }
 
-      log(`Starting Google Drive export for session ${req.params.id}`, "routes");
+      log(`Starting Google Drive export for session ${sessionId}`, "routes");
 
       const driveFiles: Array<{ filename: string; buffer: Buffer; mimeType: string }> = [];
 
