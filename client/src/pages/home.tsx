@@ -245,7 +245,7 @@ export default function Home() {
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-40">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <img src="/images/otter-mascot.png" alt="Currotter" className="w-9 h-9" />
+            <img src="/images/otter-welcome.png" alt="Currotter" className="w-9 h-9 object-contain" />
             <div>
               <h1 className="text-lg font-bold tracking-tight leading-none">Currotter</h1>
               <p className="text-[11px] text-muted-foreground">AI Photo Curator</p>

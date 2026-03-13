@@ -12,7 +12,7 @@ export default function Landing() {
       <nav className="fixed top-0 w-full z-50 border-b bg-background/80 backdrop-blur-md" data-testid="nav-landing">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
-            <img src="/images/otter-mascot.png" alt="Currotter" className="h-8 w-8" />
+            <img src="/images/otter-welcome.png" alt="Currotter" className="h-8 w-8 object-contain" />
             <span className="text-xl font-bold tracking-tight">Currotter</span>
           </div>
           <div className="hidden md:flex items-center gap-8">
@@ -286,7 +286,7 @@ export default function Landing() {
       <footer className="py-8 px-4 sm:px-6 lg:px-8 border-t">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <img src="/images/otter-mascot.png" alt="Currotter" className="h-5 w-5" />
+            <img src="/images/otter-welcome.png" alt="Currotter" className="h-5 w-5 object-contain" />
             <span className="font-semibold">Currotter</span>
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
