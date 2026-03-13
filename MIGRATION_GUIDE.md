@@ -1,6 +1,6 @@
-# Currotter - Local Development & DigitalOcean Deployment Guide
+# Currotter — Local Development & DigitalOcean Deployment Guide
 
-A comprehensive preparation document for migrating Currotter from Replit to a local development environment with DigitalOcean deployment.
+A comprehensive guide for migrating Currotter from Replit to a local development environment and deploying to DigitalOcean.
 
 ---
 
@@ -8,45 +8,50 @@ A comprehensive preparation document for migrating Currotter from Replit to a lo
 
 1. [Project Overview](#1-project-overview)
 2. [Architecture Overview](#2-architecture-overview)
-3. [System Architecture Diagram](#3-system-architecture-diagram)
+3. [AI Pipeline Architecture](#3-ai-pipeline-architecture)
 4. [Directory Structure](#4-directory-structure)
 5. [Database Schema & ERD](#5-database-schema--erd)
 6. [DDL (Data Definition Language)](#6-ddl-data-definition-language)
-7. [AI Pipeline Architecture](#7-ai-pipeline-architecture)
-8. [API Reference](#8-api-reference)
-9. [Environment Variables](#9-environment-variables)
-10. [Authentication - Migration from Replit Auth](#10-authentication---migration-from-replit-auth)
-11. [Google Drive Integration - Migration](#11-google-drive-integration---migration)
-12. [Local Development Setup](#12-local-development-setup)
-13. [DigitalOcean Deployment](#13-digitalocean-deployment)
-14. [Dependencies](#14-dependencies)
-15. [Build & Production](#15-build--production)
-16. [Troubleshooting](#16-troubleshooting)
+7. [API Reference](#7-api-reference)
+8. [Environment Variables](#8-environment-variables)
+9. [Authentication — Migration from Replit Auth](#9-authentication--migration-from-replit-auth)
+10. [Google Drive Integration — Migration](#10-google-drive-integration--migration)
+11. [Local Development Setup](#11-local-development-setup)
+12. [DigitalOcean Deployment](#12-digitalocean-deployment)
+13. [Dependencies](#13-dependencies)
+14. [Build & Production](#14-build--production)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
 ## 1. Project Overview
 
-**Currotter** is an AI-powered photo curation web application with an otter mascot theme. It takes batches of event photos and uses a three-agent AI pipeline to:
+**Currotter** is an AI-powered photo curation web application with an otter mascot theme. It takes batches of event photos (up to 250) and uses a three-agent AI pipeline to:
 
-- Remove duplicate photos (perceptual hashing)
+- Remove duplicate photos using perceptual hashing
 - Filter out blurry and poorly-lit shots
-- Score remaining photos using AI vision (DigitalOcean Gradient AI / GPT-4.1-mini)
-- Cluster visually similar photos and pick the best from each group
-- Return a curated album with explanations for why each photo was selected
+- Pre-rank photos by local quality (blur + brightness score)
+- Apply a smart AI budget: only the top-ranked photos are sent to the vision API
+- Score remaining photos synthetically using local metrics
+- Cluster visually similar photos and select the best from each group
+- Assign quality tiers (Hero / Great / Good) to every curated photo
+- Return a curated album with explanations for why each photo was kept
 
 ### Key Features
 
 | Feature | Description |
 |---------|-------------|
-| Multi-Agent AI Pipeline | 3-stage processing: Filtering → Analysis → Decision |
+| Multi-Agent AI Pipeline | 3-stage processing: Filtering → Analysis (with AI budget) → Decision |
+| Up to 250 Photos | Per-session limit with estimated processing time shown on upload |
+| Smart AI Budget | Social: top 100 → AI; Minimal: top 60 → AI; rest scored locally |
+| Quality Tiers | Hero (top 15%), Great (top 35%), Good — shown as badges in gallery |
 | Two Curation Modes | **Social** (more variety) and **Minimal** (only the best) |
-| Real-time Progress | WebSocket-based live progress updates |
+| Real-time Progress | WebSocket primary; HTTP polling fallback |
 | Google Drive Export | Save curated photos directly to Google Drive |
 | ZIP Download | Download curated album as a compressed ZIP |
 | Swagger API Docs | OpenAPI 3.0 documentation at `/api-docs` |
 | Dark/Light Theme | Full theme support with otter-themed UI |
-| Authentication | OpenID Connect (currently Replit Auth — needs migration) |
+| Authentication | OpenID Connect (currently Replit Auth — needs migration for external deploy) |
 
 ---
 
@@ -70,100 +75,166 @@ A comprehensive preparation document for migrating Currotter from Replit to a lo
 | **Real-time** | Native WebSocket (ws library) |
 | **API Docs** | Swagger/OpenAPI via swagger-jsdoc + swagger-ui-express |
 
-### Request Flow
+### System Architecture Diagram
+
+```mermaid
+flowchart TD
+    Browser["Browser\n(React + Vite)"]
+
+    subgraph Client["Client Layer"]
+        Landing["Landing Page\n(unauthenticated)"]
+        Home["Home Page\nupload · progress · results"]
+        Gallery["Results Gallery\ntier badges · lightbox · export"]
+    end
+
+    subgraph Server["Express Server  :5000"]
+        Middleware["Middleware\nexpress-session · passport · request logger"]
+        Auth["Auth Routes\n/api/login · /api/callback · /api/logout"]
+        API["API Routes\n/api/curate · /api/sessions\n/api/download · /api/export-drive"]
+        WS["WebSocket  /ws\nreal-time progress broadcast"]
+        Swagger["Swagger UI  /api-docs"]
+        Pipeline["Pipeline Orchestrator\nroutes.ts — AI budget logic"]
+
+        subgraph Agents["Three-Agent Pipeline"]
+            F["1 · Filtering Agent\nperceptual hash · blur · brightness\nlocalScore pre-rank"]
+            Budget{{"AI Budget Router\nSocial cap 100\nMinimal cap 60"}}
+            A["2 · Analysis Agent\nGradient AI GPT-4.1-mini\naesthetic score · scene desc\n76-dim embedding"]
+            Synth["Synthetic Scorer\nlocalScore → aesthetic proxy\ncolor embedding\n(no API cost)"]
+            D["3 · Decision Agent\ncosine clustering · weighted score\nqualityTier assignment"]
+        end
+    end
+
+    subgraph DO["DigitalOcean"]
+        Spaces["Spaces  S3-compatible\ntemporary image store"]
+        GradientAI["Gradient AI\nGPT-4.1-mini vision API"]
+        PG["Managed PostgreSQL\nusers + sessions tables"]
+    end
+
+    GDrive["Google Drive API"]
+
+    Browser --> Client
+    Client -->|"HTTPS"| Middleware
+    Client -->|"WSS"| WS
+    Middleware --> Auth & API & Swagger
+    Auth --> PG
+    API --> Pipeline
+    Pipeline --> F --> Budget
+    Budget -->|"top N by localScore"| A --> D
+    Budget -->|"remaining"| Synth --> D
+    A -->|"vision API call"| GradientAI
+    Pipeline <-->|"upload · download"| Spaces
+    API -->|"export"| GDrive
+    WS -.->|"progress events"| Browser
+```
+
+### Request Flow Summary
 
 ```
 Browser → Express Server (port 5000)
-  ├── /api/* → API Routes (authenticated)
-  ├── /ws → WebSocket (progress updates)
-  ├── /api-docs → Swagger UI
-  ├── /api/login → Auth flow
-  └── /* → Vite dev server (dev) or Static files (prod)
-```
-
-### Data Flow
-
-```
-User uploads images
-  → Multer (memory storage, max 20MB/file, max 50 files)
-  → DigitalOcean Spaces (temporary storage)
-  → Filtering Agent (perceptual hash, blur, brightness)
-  → Analysis Agent (Gradient AI vision scoring)
-  → Decision Agent (clustering + selection)
-  → Curated results returned via API/WebSocket
-  → User downloads ZIP or exports to Google Drive
+  ├── /api/*          → API Routes (require authentication)
+  ├── /ws             → WebSocket (real-time progress updates)
+  ├── /api-docs       → Swagger UI
+  ├── /api/login      → OIDC auth flow
+  └── /*              → Vite dev server (dev) or static files (prod)
 ```
 
 ---
 
-## 3. System Architecture Diagram
+## 3. AI Pipeline Architecture
 
+### Pipeline Flow Diagram
+
+```mermaid
+flowchart LR
+    Upload(["User uploads\n1–250 photos\n10 MB max each"])
+
+    subgraph Stage1["Stage 1 · Filtering Agent  filtering.ts"]
+        direction TB
+        Hash["Perceptual Hash\nimage-hash 16-bit\nHamming distance at BIT level\nthreshold ≤ 30 bits = duplicate\ncanonical representative tracking"]
+        Blur["Blur Detection\nLaplacian variance on 256×256 grey\nthreshold 100 — below = too blurry"]
+        Bright["Brightness Check\nweighted RGB on 64×64\n< 0.08 too dark · > 0.95 overexposed"]
+        LocalScore["Local Score\nblur × 0.60 + brightness × 0.40\nused to pre-rank for AI budget"]
+    end
+
+    subgraph Stage2["Stage 2 · Analysis Agent  analysis.ts"]
+        direction TB
+        BudgetSplit{{"AI Budget Split\n(per mode)"}}
+        AIPath["AI Analysis\nresize to 512×512 JPEG q70\nGPT-4.1-mini vision API\nConcurrency: 3 parallel\nRetry: 2× with backoff\naesthetic score 0–1\nscene description\n76-dim embedding"]
+        SynthPath["Synthetic Scoring\naesthetic = localScore×0.82+0.10\nreal 76-dim color embedding\nno API call · no cost"]
+    end
+
+    subgraph Stage3["Stage 3 · Decision Agent  decision.ts"]
+        direction TB
+        Embed["76-dim Visual Embedding\n24 color histogram bins R/G/B\n48 spatial grid 4×4\n3 HSL averages · 1 aesthetic dim\nL2-normalized"]
+        Cluster["Cosine Similarity Clustering\nSocial threshold 0.90\nMinimal threshold 0.80"]
+        WeightedScore["Weighted Scoring\nfocus quality\naesthetic score\nuniqueness\nbrightness"]
+        Select["Best-per-Cluster Selection\nSocial: 2 per cluster\nMinimal: 1 per cluster"]
+        Reason["Selection Reason\nhuman-readable explanation\nwhy each photo was kept"]
+        Tiers["Quality Tier Assignment\nHero — top 15% by finalScore\nGreat — next 35%\nGood — remainder"]
+    end
+
+    Results(["Curated Album\nwith tiers · reasons\naiAnalyzed flag"])
+
+    Upload --> Stage1
+    Hash --> Blur --> Bright --> LocalScore
+    LocalScore --> BudgetSplit
+    BudgetSplit -->|"Social: top 100\nMinimal: top 60"| AIPath
+    BudgetSplit -->|"remaining photos"| SynthPath
+    AIPath --> Embed
+    SynthPath --> Embed
+    Embed --> Cluster --> WeightedScore --> Select --> Reason --> Tiers --> Results
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        CLIENT (React + Vite)                        │
-│                                                                     │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  ┌───────────┐ │
-│  │ Landing   │  │ Home Page    │  │ Results       │  │ Terms/    │ │
-│  │ Page      │  │ (Upload +   │  │ Gallery +     │  │ Privacy   │ │
-│  │           │  │  Mode Select)│  │ Lightbox      │  │           │ │
-│  └──────────┘  └──────────────┘  └───────────────┘  └───────────┘ │
-│        │              │                  │                          │
-│  ┌─────┴──────────────┴──────────────────┴────────────────────┐    │
-│  │              Hooks: useAuth, useWebSocket                   │    │
-│  │              TanStack Query for data fetching               │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │ HTTP + WebSocket
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     SERVER (Express + TypeScript)                    │
-│                                                                     │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                    Middleware Layer                             │ │
-│  │  express.json ─→ express-session ─→ passport ─→ request logger│ │
-│  └────────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│  │ Auth Routes  │  │ API Routes   │  │ WebSocket Server         │ │
-│  │ /api/login   │  │ /api/curate  │  │ /ws                      │ │
-│  │ /api/callback│  │ /api/sessions│  │ subscribe to session     │ │
-│  │ /api/logout  │  │ /api/download│  │ broadcast progress       │ │
-│  │ /api/auth/*  │  │ /api/export  │  │                          │ │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────────────────┘ │
-│         │                 │                                        │
-│         ▼                 ▼                                        │
-│  ┌─────────────┐  ┌──────────────────────────────────────────┐    │
-│  │ Auth Storage│  │         AI PIPELINE                       │    │
-│  │ (Drizzle)   │  │                                          │    │
-│  └──────┬──────┘  │  ┌────────────┐  ┌────────────────────┐ │    │
-│         │         │  │ 1. Filter  │  │ 2. Analysis Agent  │ │    │
-│         │         │  │   Agent    │→│   (Gradient AI)    │ │    │
-│         │         │  │            │  │   GPT-4.1-mini     │ │    │
-│         │         │  │ • pHash    │  │   vision API       │ │    │
-│         │         │  │ • blur     │  │                    │ │    │
-│         │         │  │ • bright   │  │ • aesthetic score  │ │    │
-│         │         │  └────────────┘  │ • scene desc       │ │    │
-│         │         │                  │ • embeddings       │ │    │
-│         │         │                  └─────────┬──────────┘ │    │
-│         │         │                            │            │    │
-│         │         │                  ┌─────────▼──────────┐ │    │
-│         │         │                  │ 3. Decision Agent  │ │    │
-│         │         │                  │                    │ │    │
-│         │         │                  │ • cosine sim       │ │    │
-│         │         │                  │ • clustering       │ │    │
-│         │         │                  │ • weighted scoring │ │    │
-│         │         │                  │ • selection reason │ │    │
-│         │         │                  └────────────────────┘ │    │
-│         │         └──────────────────────────────────────────┘    │
-│         │                                                         │
-│         ▼                                                         │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│  │ PostgreSQL  │  │ DO Spaces    │  │ Google Drive API         │ │
-│  │ (users +    │  │ (S3 compat)  │  │ (googleapis)             │ │
-│  │  sessions)  │  │ image store  │  │ export curated photos    │ │
-│  └─────────────┘  └──────────────┘  └──────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
-```
+
+### Stage 1 — Filtering Agent (`server/agents/filtering.ts`)
+
+**Input:** Raw image buffers from multer upload (up to 250, 10 MB each)
+
+| Step | Detail |
+|------|--------|
+| JPEG normalisation | Sharp converts to JPEG quality 85 |
+| Perceptual hash | image-hash 16-bit; Hamming distance at **bit level** (hex→binary); duplicate threshold: 30 bits |
+| Duplicate tracking | Canonical representative: if a duplicate is sharper than the current canonical, it replaces it |
+| Blur score | Laplacian variance on 256×256 greyscale; below 100 = too blurry |
+| Brightness | Weighted RGB average on 64×64; below 0.08 = too dark; above 0.95 = overexposed |
+| Local score | `blur × 0.60 + brightness × 0.40` — used to rank photos before AI budget split |
+
+**Output:** `FilterResult[]` — passed images with `localScore`, `buffer`, and quality flags
+
+---
+
+### Stage 2 — Analysis Agent (`server/agents/analysis.ts`)
+
+**Input:** Passed images from Stage 1, sorted by `localScore` descending
+
+**AI Budget split (in `server/routes.ts`):**
+- Sort all passed images by `localScore` (highest first)
+- `AI_ANALYSIS_CAP = { social: 100, minimal: 60 }`
+- Top N → full AI analysis; remainder → synthetic scoring
+
+| Path | Detail |
+|------|--------|
+| **AI path** | Resize to 512×512 JPEG q70; send to `https://inference.do-ai.run/v1/chat/completions` with model `openai-gpt-4.1-mini`; 3 concurrent requests; 2 retries with 1s/2s backoff |
+| **Synthetic path** | `aestheticScore = min(0.92, localScore × 0.82 + 0.10)`; scene description = "Photo"; real 76-dim color embedding computed locally |
+| **Embedding** | 24 color histogram bins (R/G/B 8 bins each) + 48 spatial grid (4×4 avg colors) + 3 HSL averages + 1 aesthetic score dim; L2-normalized |
+
+**Output:** `AnalysisResult[]` merged from both paths; `aiAnalyzedIds` Set passed to decision agent
+
+---
+
+### Stage 3 — Decision Agent (`server/agents/decision.ts`)
+
+**Input:** `FilterResult[]`, `AnalysisResult[]`, mode, `aiAnalyzedIds` Set
+
+| Step | Detail |
+|------|--------|
+| Weighted score | `focus×w₁ + aesthetic×w₂ + uniqueness×w₃ + brightness×w₄` (weights differ by mode) |
+| Cosine clustering | Pairwise cosine similarity on 76-dim embeddings; Social 0.90, Minimal 0.80 threshold |
+| Selection | Social: 2 best per cluster; Minimal: 1 best per cluster |
+| Selection reason | Generated from score components (sharpness, lighting, uniqueness, cluster comparison) |
+| Quality tiers | Sort selected photos by `finalScore`; top 15% → `hero`, next 35% → `great`, rest → `good` |
+| `aiAnalyzed` flag | `true` if photo ID is in `aiAnalyzedIds`, `false` for synthetic |
+
+**Output:** `ScoredImage[]` with `qualityTier`, `aiAnalyzed`, `selectionReason`, `finalScore`, `clusterId`
 
 ---
 
@@ -183,10 +254,10 @@ currotter/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── ui/                  # shadcn/ui components (auto-generated)
-│   │   │   ├── upload-zone.tsx      # Drag-and-drop file upload
+│   │   │   ├── upload-zone.tsx      # Drag-and-drop upload (250 files, time estimate)
 │   │   │   ├── mode-selector.tsx    # Social vs Minimal mode picker
 │   │   │   ├── pipeline-progress.tsx# Multi-stage progress visualization
-│   │   │   ├── results-gallery.tsx  # Curated photo gallery + lightbox
+│   │   │   ├── results-gallery.tsx  # Gallery: tier badges, lightbox, export
 │   │   │   ├── theme-provider.tsx   # Dark/light mode provider
 │   │   │   └── theme-toggle.tsx     # Theme switch button
 │   │   ├── hooks/
@@ -195,7 +266,7 @@ currotter/
 │   │   │   ├── use-toast.ts         # Toast notification hook
 │   │   │   └── use-mobile.tsx       # Mobile detection hook
 │   │   ├── lib/
-│   │   │   ├── queryClient.ts       # TanStack Query setup
+│   │   │   ├── queryClient.ts       # TanStack Query setup + apiRequest
 │   │   │   ├── auth-utils.ts        # Auth utility helpers
 │   │   │   └── utils.ts             # General utilities (cn helper)
 │   │   ├── pages/
@@ -210,9 +281,9 @@ currotter/
 │   └── index.html
 ├── server/                          # Backend (Express)
 │   ├── agents/
-│   │   ├── filtering.ts             # Agent 1: Perceptual hash, blur, brightness
-│   │   ├── analysis.ts              # Agent 2: Gradient AI vision scoring
-│   │   └── decision.ts              # Agent 3: Clustering + selection
+│   │   ├── filtering.ts             # Agent 1: pHash, blur, brightness, localScore
+│   │   ├── analysis.ts              # Agent 2: Gradient AI vision + synthetic scoring
+│   │   └── decision.ts              # Agent 3: clustering, scoring, quality tiers
 │   ├── replit_integrations/auth/    # Auth module (NEEDS MIGRATION)
 │   │   ├── index.ts                 # Re-exports
 │   │   ├── replitAuth.ts            # OIDC setup, login/callback/logout
@@ -221,23 +292,23 @@ currotter/
 │   ├── db.ts                        # PostgreSQL connection (Drizzle)
 │   ├── gdrive.ts                    # Google Drive integration (NEEDS MIGRATION)
 │   ├── index.ts                     # App entry point
-│   ├── routes.ts                    # API routes + WebSocket + pipeline orchestration
+│   ├── routes.ts                    # API routes + WebSocket + AI budget orchestration
 │   ├── spaces.ts                    # DigitalOcean Spaces (S3) operations
 │   ├── static.ts                    # Production static file serving
 │   ├── storage.ts                   # In-memory session/curation state
 │   ├── swagger.ts                   # Swagger/OpenAPI setup
 │   └── vite.ts                      # Vite dev server integration
 ├── shared/                          # Shared types (frontend + backend)
-│   ├── schema.ts                    # Zod schemas + type exports
+│   ├── schema.ts                    # Zod schemas (qualityTier + aiAnalyzed)
 │   └── models/
 │       └── auth.ts                  # Drizzle table definitions (users, sessions)
 ├── script/
-│   └── build.ts                     # Production build script (esbuild + Vite)
+│   └── build.ts                     # Production build (esbuild + Vite)
 ├── package.json
 ├── tsconfig.json
-├── vite.config.ts                   # Vite configuration
-├── drizzle.config.ts                # Drizzle ORM configuration
-├── tailwind.config.ts               # Tailwind CSS configuration
+├── vite.config.ts
+├── drizzle.config.ts
+├── tailwind.config.ts
 └── components.json                  # shadcn/ui configuration
 ```
 
@@ -245,7 +316,7 @@ currotter/
 
 ## 5. Database Schema & ERD
 
-### Entity Relationship Diagram (ERD)
+### Persisted Tables (PostgreSQL)
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -260,7 +331,6 @@ currotter/
 │     updated_at      TIMESTAMP   DEFAULT now()│
 └─────────────────────────────────────────────┘
 
-
 ┌─────────────────────────────────────────────┐
 │                  sessions                    │
 ├─────────────────────────────────────────────┤
@@ -270,60 +340,46 @@ currotter/
 ├─────────────────────────────────────────────┤
 │ IDX IDX_session_expire ON (expire)           │
 └─────────────────────────────────────────────┘
+```
 
+### In-Memory Curation State
 
-┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
-│   curation_sessions (IN-MEMORY ONLY)         │
-│ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
-│  id              string (UUID)               │
-│  status          enum (uploading, processing,│
-│                  filtering, analyzing,       │
-│                  deciding, completed, error)  │
-│  mode            enum (social, minimal)      │
-│  totalImages     number                      │
-│  processedImages number                      │
-│  originalImages  ImageAnalysis[]             │
-│  curatedImages   ImageAnalysis[]             │
-│  stats           SessionStats (optional)     │
-│  createdAt       ISO string                  │
-│  error           string (optional)           │
-│  spacesKeys      string[]                    │
-└ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
-  Note: Curation sessions are stored in-memory
-  (Map) and are lost on server restart. Consider
-  persisting to PostgreSQL for production.
+```
+┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
+│  curation_sessions  (IN-MEMORY only, Map<string, Session>)  │
+├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+│  id              UUID string                                 │
+│  status          uploading|processing|filtering|analyzing|   │
+│                  deciding|completed|error                    │
+│  mode            social | minimal                            │
+│  totalImages     number (max 250)                            │
+│  processedImages number                                      │
+│  originalImages  ImageAnalysis[]                             │
+│  curatedImages   ImageAnalysis[]  (qualityTier + aiAnalyzed) │
+│  stats           SessionStats                                │
+│  spacesKeys      string[]  (DO Spaces object keys)           │
+│  createdAt       ISO timestamp string                        │
+│  error           string (optional)                           │
+└ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+Note: lost on server restart — persist to PostgreSQL for production.
 ```
 
 ### Relationships
 
-- **users ↔ sessions**: No direct foreign key. The `sessions.sess` JSONB column contains the serialized Passport.js user object, which includes the user's `sub` (ID) claim. Express-session manages this relationship through `connect-pg-simple`.
-- **Curation sessions**: Currently stored in-memory only. No database persistence. Each curation session references DigitalOcean Spaces keys for image storage.
-
-### Important Notes
-
-- The `users` and `sessions` tables are the **only persisted tables**. They handle authentication state only.
-- All curation processing data (uploaded images, scores, curated results) lives **in-memory** during processing and in **DigitalOcean Spaces** for image blobs.
-- For a production deployment, you may want to add a `curation_sessions` table to persist curation history.
+- **users ↔ sessions**: No foreign key. `sessions.sess` (JSONB) contains the serialised Passport user object with the user's `sub` claim.
+- **Curation sessions**: In-memory only. Each session references DO Spaces keys for image blobs.
 
 ---
 
 ## 6. DDL (Data Definition Language)
 
-### Complete DDL for PostgreSQL
+### PostgreSQL DDL
 
 ```sql
--- ============================================
--- Currotter Database DDL
--- PostgreSQL 14+
--- ============================================
-
 -- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ============================================
--- Table: users
--- Purpose: Store authenticated user profiles
--- ============================================
+-- Users table
 CREATE TABLE IF NOT EXISTS users (
     id              VARCHAR     PRIMARY KEY DEFAULT gen_random_uuid(),
     email           VARCHAR     UNIQUE,
@@ -333,28 +389,18 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TIMESTAMP   DEFAULT now(),
     updated_at      TIMESTAMP   DEFAULT now()
 );
-
--- Unique index on email (already implied by UNIQUE constraint)
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users USING btree (email);
 
--- ============================================
--- Table: sessions
--- Purpose: Express session storage (connect-pg-simple)
--- Used by: express-session + Passport.js
--- ============================================
+-- Sessions table (connect-pg-simple)
 CREATE TABLE IF NOT EXISTS sessions (
     sid     VARCHAR     PRIMARY KEY,
     sess    JSONB       NOT NULL,
     expire  TIMESTAMP   NOT NULL
 );
-
--- Index for session expiry cleanup
 CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON sessions USING btree (expire);
 ```
 
-### Drizzle ORM Schema (source of truth)
-
-The Drizzle ORM schema in `shared/models/auth.ts` is the source of truth:
+### Drizzle ORM Schema (`shared/models/auth.ts`)
 
 ```typescript
 import { sql } from "drizzle-orm";
@@ -384,35 +430,28 @@ export const users = pgTable("users", {
 ### Running Migrations
 
 ```bash
-# Push schema changes to database (uses drizzle-kit)
 npm run db:push
-
-# If there are conflicts, force push:
+# Force if there are conflicts:
 npm run db:push --force
 ```
 
-### Optional: Persistent Curation Sessions Table
-
-If you want to persist curation history in production, add this table:
+### Optional: Persistent Curation Sessions
 
 ```sql
--- ============================================
--- Table: curation_sessions (OPTIONAL - for persistence)
--- Purpose: Persist curation results beyond server restart
--- ============================================
+-- For production — persist curation history
 CREATE TABLE IF NOT EXISTS curation_sessions (
-    id              VARCHAR     PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         VARCHAR     REFERENCES users(id) ON DELETE CASCADE,
-    status          VARCHAR     NOT NULL DEFAULT 'uploading',
-    mode            VARCHAR     NOT NULL DEFAULT 'social',
-    total_images    INTEGER     NOT NULL DEFAULT 0,
-    processed_images INTEGER    NOT NULL DEFAULT 0,
-    curated_images  JSONB       DEFAULT '[]'::jsonb,
-    stats           JSONB,
-    spaces_keys     TEXT[]      DEFAULT '{}',
-    error           TEXT,
-    created_at      TIMESTAMP   DEFAULT now(),
-    completed_at    TIMESTAMP
+    id               VARCHAR     PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id          VARCHAR     REFERENCES users(id) ON DELETE CASCADE,
+    status           VARCHAR     NOT NULL DEFAULT 'uploading',
+    mode             VARCHAR     NOT NULL DEFAULT 'social',
+    total_images     INTEGER     NOT NULL DEFAULT 0,
+    processed_images INTEGER     NOT NULL DEFAULT 0,
+    curated_images   JSONB       DEFAULT '[]'::jsonb,
+    stats            JSONB,
+    spaces_keys      TEXT[]      DEFAULT '{}',
+    error            TEXT,
+    created_at       TIMESTAMP   DEFAULT now(),
+    completed_at     TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_curation_user ON curation_sessions (user_id);
@@ -421,259 +460,172 @@ CREATE INDEX IF NOT EXISTS idx_curation_status ON curation_sessions (status);
 
 ---
 
-## 7. AI Pipeline Architecture
+## 7. API Reference
 
-### Pipeline Stages
+All endpoints require authentication except auth routes. Interactive docs at `/api-docs`.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         STAGE 1: FILTERING AGENT                        │
-│                         server/agents/filtering.ts                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Input: Raw image buffers from upload                                   │
-│                                                                         │
-│  1. Convert to JPEG (sharp, quality 85)                                 │
-│  2. Compute perceptual hash (image-hash, 16-bit)                        │
-│     └── Hamming distance at BIT level (hex→binary conversion)           │
-│     └── Threshold: 30 bits (DUPLICATE_THRESHOLD)                        │
-│     └── Canonical representative tracking:                              │
-│         If duplicate is sharper → replace canonical, mark old as dup    │
-│  3. Compute blur score (Laplacian variance on 256×256 greyscale)        │
-│     └── Threshold: 100 (BLUR_THRESHOLD) — below = too blurry           │
-│  4. Compute brightness (weighted RGB average on 64×64)                  │
-│     └── Range: 0.0–1.0                                                  │
-│     └── Rejected if < 0.08 (too dark) or > 0.95 (overexposed)          │
-│                                                                         │
-│  Output: Passed images + stats (dups/blurry/low-quality counts)         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       STAGE 2: ANALYSIS AGENT                           │
-│                       server/agents/analysis.ts                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Input: Filtered image buffers                                          │
-│                                                                         │
-│  1. Resize to 512×512 JPEG (quality 70) for API efficiency              │
-│  2. Send to DigitalOcean Gradient AI (GPT-4.1-mini vision)              │
-│     └── API: https://inference.do-ai.run/v1/chat/completions            │
-│     └── System prompt: rate aesthetic quality 0.0–1.0                   │
-│     └── Returns: { aesthetic_score, scene_description }                 │
-│     └── Concurrency: 3 parallel requests (MAX_CONCURRENT)              │
-│     └── Retry: 2 retries with backoff (1s, 2s)                         │
-│  3. Generate visual embedding (76-dimensional vector):                  │
-│     └── 8-bin color histograms (R, G, B) = 24 dims                     │
-│     └── 4×4 spatial grid average colors = 48 dims                      │
-│     └── HSL averages = 3 dims                                          │
-│     └── Aesthetic score = 1 dim                                         │
-│     └── L2-normalized                                                   │
-│                                                                         │
-│  Output: { id, aestheticScore, sceneDescription, embedding[] }          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       STAGE 3: DECISION AGENT                           │
-│                       server/agents/decision.ts                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Input: Filter results + Analysis results + Mode                        │
-│                                                                         │
-│  1. Cluster images using cosine similarity on embeddings                │
-│     └── Social mode threshold: 0.90 (more clusters = more variety)     │
-│     └── Minimal mode threshold: 0.80 (fewer clusters = stricter)       │
-│  2. Compute weighted final score per image:                             │
-│     Social:  focus=0.20, aesthetic=0.35, uniqueness=0.30, bright=0.15  │
-│     Minimal: focus=0.25, aesthetic=0.45, uniqueness=0.15, bright=0.15  │
-│     └── Focus: normalized blur score (blur / 1000, capped at 1.0)      │
-│     └── Brightness penalty: 0.5 if extreme, 0.75 if borderline         │
-│     └── Uniqueness: 1/√(cluster_size)                                  │
-│  3. Select best photos per cluster:                                     │
-│     └── Social: up to 2 per cluster                                    │
-│     └── Minimal: 1 per cluster                                         │
-│  4. Generate human-readable selection reason                            │
-│     └── Based on aesthetic score, sharpness, lighting, uniqueness      │
-│                                                                         │
-│  Output: ScoredImage[] with isSelected flag + selectionReason           │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/login` | — | Initiates OIDC login flow |
+| `GET` | `/api/callback` | — | OIDC callback handler |
+| `GET` | `/api/logout` | — | Logs out, ends session |
+| `GET` | `/api/auth/user` | Yes | Current authenticated user |
+| `POST` | `/api/curate` | Yes | Upload images (≤250, 10 MB each) + start pipeline |
+| `GET` | `/api/sessions/:id` | Yes | Session status, progress, and curated results |
+| `GET` | `/api/sessions/:id/download` | Yes | Download curated images as ZIP |
+| `POST` | `/api/sessions/:id/export-drive` | Yes | Export curated images to Google Drive |
+| `WS` | `/ws` | Yes | WebSocket for real-time progress updates |
 
-### Scoring Formula
+### `POST /api/curate` — Request
 
 ```
-finalScore = (w_focus × normalizedBlur) + (w_aesthetic × aestheticScore) 
-           + (w_uniqueness × uniqueness) + (w_brightness × brightnessPenalty)
-
-Where:
-  normalizedBlur = min(1, blurScore / 1000)
-  uniqueness = 1 / √(clusterSize)
-  brightnessPenalty = 0.5 if extreme | 0.75 if borderline | 1.0 if normal
+Content-Type: multipart/form-data
+Fields:
+  mode    string   "social" | "minimal"
+  photos  File[]   up to 250 image files (JPEG, PNG, WebP; max 10 MB each)
 ```
 
----
+### `GET /api/sessions/:id` — Response
 
-## 8. API Reference
-
-All endpoints require authentication except `/api/login`, `/api/callback`, `/api/logout`.
-
-### Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/curate` | Yes | Upload images + start pipeline |
-| GET | `/api/sessions/:id` | Yes | Get session status/results |
-| GET | `/api/sessions/:id/download` | Yes | Download curated ZIP |
-| POST | `/api/sessions/:id/export-drive` | Yes | Export to Google Drive |
-| GET | `/api/auth/user` | Yes | Get current user profile |
-| GET | `/api/login` | No | Initiate OIDC login flow |
-| GET | `/api/callback` | No | OIDC callback handler |
-| GET | `/api/logout` | No | Logout + end session |
-| GET | `/api-docs` | No | Swagger UI |
-| GET | `/api-docs.json` | No | OpenAPI spec JSON |
-| WS | `/ws` | No | WebSocket for progress |
-
-### WebSocket Protocol
-
-```javascript
-// Client → Server: Subscribe to session updates
-{ "type": "subscribe", "sessionId": "uuid-here" }
-
-// Server → Client: Progress update
+```typescript
 {
-  "type": "progress",
-  "payload": {
-    "sessionId": "uuid",
-    "stage": "filtering" | "analyzing" | "deciding" | "completed" | "error",
-    "progress": 0-100,
-    "message": "Human-readable status",
-    "stats": {                    // Only on "completed"
-      "duplicatesRemoved": 3,
-      "blurryRemoved": 1,
-      "lowBrightnessRemoved": 0,
-      "totalRemoved": 4,
-      "clustersFound": 5
-    }
-  }
+  id: string,
+  status: "uploading"|"processing"|"filtering"|"analyzing"|"deciding"|"completed"|"error",
+  mode: "social"|"minimal",
+  totalImages: number,
+  processedImages: number,
+  curatedImages: ImageAnalysis[],  // only when completed
+  stats: {
+    totalInput: number,
+    duplicatesRemoved: number,
+    blurryRemoved: number,
+    lowBrightnessRemoved: number,
+    totalRemoved: number,
+    clustersFound: number,
+  },
+}
+```
+
+### `ImageAnalysis` type
+
+```typescript
+{
+  id: string,
+  filename: string,
+  spacesUrl: string,
+  blurScore?: number,
+  brightnessScore?: number,
+  aestheticScore?: number,
+  sceneDescription?: string,
+  finalScore?: number,
+  selectionReason?: string,
+  qualityTier?: "hero" | "great" | "good",
+  aiAnalyzed?: boolean,
+  isDuplicate: boolean,
+  isBlurry: boolean,
+  isTooLow: boolean,
+  isSelected: boolean,
 }
 ```
 
 ---
 
-## 9. Environment Variables
+## 8. Environment Variables
 
-### Required Variables
+### Required for All Environments
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/dbname` |
-| `SESSION_SECRET` | Express session encryption key | Any random 32+ char string |
-| `DO_SPACES_KEY` | DigitalOcean Spaces access key ID | `DO00...` |
-| `DO_SPACES_SECRET` | DigitalOcean Spaces secret key | `wJ3...` |
-| `DO_SPACES_ENDPOINT` | Spaces endpoint (without https://) | `nyc3.digitaloceanspaces.com` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host/db` |
+| `SESSION_SECRET` | Express session encryption key | 32+ random chars |
+| `DO_SPACES_KEY` | DigitalOcean Spaces access key ID | — |
+| `DO_SPACES_SECRET` | DigitalOcean Spaces secret access key | — |
+| `DO_SPACES_ENDPOINT` | Spaces region endpoint | `nyc3.digitaloceanspaces.com` |
 | `DO_SPACES_BUCKET` | Spaces bucket name | `currotter-images` |
-| `GRADIENT_API_KEY` | DigitalOcean Gradient AI API key | `dop_v1_...` |
-| `PORT` | Server port (default 5000) | `5000` |
-| `NODE_ENV` | Environment mode | `development` or `production` |
+| `GRADIENT_API_KEY` | DigitalOcean Gradient AI API key | — |
 
-### Variables to Add (for local/DO deployment)
+### Required After Auth Migration (replacing Replit Auth)
 
-| Variable | Description | Notes |
-|----------|-------------|-------|
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID | Replace Replit Auth |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Replace Replit Auth |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URL | `https://yourdomain.com/api/callback` |
-| `APP_URL` | Your app's public URL | `https://currotter.yourdomain.com` |
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_CLIENT_ID` | Google OAuth 2.0 client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client secret |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL (e.g. `https://yourdomain.com/api/callback`) |
 
-### Example `.env` file
+### `.env` Template
 
 ```bash
 # Database
-DATABASE_URL=postgresql://currotter:yourpassword@db-host:25060/currotter?sslmode=require
+DATABASE_URL=postgresql://postgres:password@localhost:5432/currotter
 
 # Session
-SESSION_SECRET=your-very-long-random-secret-string-here-min-32-chars
+SESSION_SECRET=change-me-to-a-long-random-string
 
 # DigitalOcean Spaces
-DO_SPACES_KEY=DO00XXXXXXXXXXXXXXXX
-DO_SPACES_SECRET=wJ3XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+DO_SPACES_KEY=your_spaces_key
+DO_SPACES_SECRET=your_spaces_secret
 DO_SPACES_ENDPOINT=nyc3.digitaloceanspaces.com
 DO_SPACES_BUCKET=currotter-images
 
 # DigitalOcean Gradient AI
-GRADIENT_API_KEY=dop_v1_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GRADIENT_API_KEY=your_gradient_api_key
 
-# Google OAuth (replace Replit Auth)
-GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-xxxx
-GOOGLE_REDIRECT_URI=https://currotter.yourdomain.com/api/callback
-
-# App
-PORT=5000
-NODE_ENV=production
-APP_URL=https://currotter.yourdomain.com
+# Google OAuth (after Replit Auth migration)
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:5000/api/callback
 ```
 
 ---
 
-## 10. Authentication - Migration from Replit Auth
+## 9. Authentication — Migration from Replit Auth
 
-### Current State (Replit Auth)
+### Current State
 
-The app currently uses Replit's built-in OIDC provider. This **will not work outside Replit** because it depends on:
+Authentication is handled by `server/replit_integrations/auth/replitAuth.ts` using Replit's OIDC provider. This will not work outside Replit.
 
-- `process.env.ISSUER_URL` (defaults to `https://replit.com/oidc`)
-- `process.env.REPL_ID` (used as the OAuth client ID)
-- Replit's OIDC discovery endpoint
-- Replit-specific session management
+### Files to Replace
 
-### Migration Options
+| File | Action |
+|------|--------|
+| `server/replit_integrations/auth/replitAuth.ts` | Replace OIDC config with Google OAuth |
+| `server/replit_integrations/auth/storage.ts` | No changes needed |
+| `server/replit_integrations/auth/routes.ts` | No changes needed |
 
-#### Option A: Google OAuth 2.0 (Recommended)
-
-Replace `server/replit_integrations/auth/replitAuth.ts` with standard Google OAuth using `passport-google-oauth20`:
+### Option A: Google OAuth via passport-google-oauth20
 
 ```bash
 npm install passport-google-oauth20
 npm install -D @types/passport-google-oauth20
 ```
 
-Replace `replitAuth.ts` with:
+Replace `replitAuth.ts`:
 
 ```typescript
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
-import type { Express, RequestHandler } from "express";
+import { pool } from "../db";
 import { authStorage } from "./storage";
+import type { Express, RequestHandler } from "express";
 
-export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
-    ttl: sessionTtl,
-    tableName: "sessions",
-  });
-  return session({
-    secret: process.env.SESSION_SECRET!,
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: sessionTtl,
-    },
-  });
-}
+const PgSession = connectPg(session);
 
-export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
-  app.use(getSession());
+export function setupAuth(app: Express) {
+  app.use(
+    session({
+      store: new PgSession({ pool, tableName: "sessions" }),
+      secret: process.env.SESSION_SECRET!,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 days
+      },
+    })
+  );
+
   app.use(passport.initialize());
   app.use(passport.session());
 
@@ -723,91 +675,66 @@ export async function setupAuth(app: Express) {
   );
 
   app.get("/api/logout", (req, res) => {
-    req.logout(() => {
-      res.redirect("/");
-    });
+    req.logout(() => res.redirect("/"));
   });
 }
 
 export const isAuthenticated: RequestHandler = (req, res, next) => {
-  if (req.isAuthenticated()) {
-    return next();
-  }
+  if (req.isAuthenticated()) return next();
   return res.status(401).json({ message: "Unauthorized" });
 };
 ```
 
-#### Option B: Email/Password Auth
+### Option B: Email/Password Auth
 
-Add `bcrypt` for password hashing and implement local authentication with `passport-local`. This requires adding a `password_hash` column to the `users` table.
+Add `bcrypt` for password hashing and implement local auth with `passport-local`. Requires adding a `password_hash` column to the `users` table.
 
 ---
 
-## 11. Google Drive Integration - Migration
+## 10. Google Drive Integration — Migration
 
 ### Current State
 
-The Google Drive integration currently uses **Replit's connector system** (`REPLIT_CONNECTORS_HOSTNAME`, `REPL_IDENTITY`) to obtain OAuth tokens. This will not work outside Replit.
+`server/gdrive.ts` uses the Replit connector system (`REPLIT_CONNECTORS_HOSTNAME`, `REPL_IDENTITY`) to obtain OAuth tokens. This will not work outside Replit.
 
 ### Migration: Direct Google OAuth for Drive
 
-Replace `server/gdrive.ts` with standard Google Drive API authentication:
+Replace `server/gdrive.ts`:
 
 ```typescript
-import { google } from 'googleapis';
-
-function getDriveClient() {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-  );
-
-  // You'll need to store the user's Drive access token
-  // during the OAuth flow and pass it here
-  // Option 1: Store in session
-  // Option 2: Store in database with user record
-  
-  return google.drive({ version: 'v3', auth: oauth2Client });
-}
+import { google } from "googleapis";
 
 export async function uploadToDrive(
   files: Array<{ filename: string; buffer: Buffer; mimeType: string }>,
   folderName: string,
-  accessToken: string  // Pass from authenticated session
+  accessToken: string  // Pass from the authenticated user's session
 ): Promise<{ folderId: string; folderUrl: string; fileCount: number }> {
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
-  const drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const drive = google.drive({ version: "v3", auth: oauth2Client });
 
   // Create folder
   const folder = await drive.files.create({
     requestBody: {
       name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
+      mimeType: "application/vnd.google-apps.folder",
     },
-    fields: 'id, webViewLink',
+    fields: "id, webViewLink",
   });
 
   const folderId = folder.data.id!;
 
   // Upload files
   for (const file of files) {
-    const { Readable } = await import('stream');
+    const { Readable } = await import("stream");
     const stream = new Readable();
     stream.push(file.buffer);
     stream.push(null);
 
     await drive.files.create({
-      requestBody: {
-        name: file.filename,
-        parents: [folderId],
-      },
-      media: {
-        mimeType: file.mimeType,
-        body: stream,
-      },
-      fields: 'id',
+      requestBody: { name: file.filename, parents: [folderId] },
+      media: { mimeType: file.mimeType, body: stream },
+      fields: "id",
     });
   }
 
@@ -819,21 +746,22 @@ export async function uploadToDrive(
 }
 ```
 
-**Important**: To use Google Drive, you need to:
+**Required steps:**
+
 1. Enable the Google Drive API in Google Cloud Console
-2. Add `https://www.googleapis.com/auth/drive.file` to your OAuth scopes
-3. Store the user's access token (from the OAuth flow) in the session or database
-4. Pass it when calling `uploadToDrive()`
+2. Add `https://www.googleapis.com/auth/drive.file` to your OAuth scopes (in the Google Strategy config)
+3. Store the user's Drive access token (from the OAuth flow) in the session or database
+4. Pass it when calling `uploadToDrive(files, folderName, req.session.driveAccessToken)`
 
 ---
 
-## 12. Local Development Setup
+## 11. Local Development Setup
 
 ### Prerequisites
 
 - Node.js 20+ (LTS recommended)
 - PostgreSQL 14+
-- npm or yarn
+- npm
 
 ### Step-by-Step Setup
 
@@ -847,51 +775,45 @@ npm install
 
 # 3. Create PostgreSQL database
 createdb currotter
-# Or via psql:
-# psql -U postgres -c "CREATE DATABASE currotter;"
+# Or: psql -U postgres -c "CREATE DATABASE currotter;"
 
 # 4. Set up environment variables
 cp .env.example .env
-# Edit .env with your actual values (see Section 9)
+# Edit .env with your actual values (see Section 8)
 
 # 5. Push database schema
 npm run db:push
 
 # 6. Create DigitalOcean Spaces bucket
-# - Go to DO Control Panel → Spaces
-# - Create a bucket (e.g., "currotter-images")
-# - Create Spaces API keys
-# - Update .env with keys
+# GO: DO Control Panel → Spaces → Create bucket (e.g., "currotter-images")
+# GO: Spaces → Manage Keys → Create new key
+# Add keys to .env
 
-# 7. Set up Google OAuth
-# - Go to Google Cloud Console → APIs & Services → Credentials
-# - Create OAuth 2.0 Client ID (Web application)
-# - Set authorized redirect URI: http://localhost:5000/api/callback
-# - Update .env with client ID and secret
+# 7. Set up Google OAuth (after auth migration)
+# GO: console.cloud.google.com → APIs & Services → Credentials
+# Create OAuth 2.0 Client ID (Web application)
+# Authorized redirect URI: http://localhost:5000/api/callback
+# Add client ID + secret to .env
 
 # 8. Get DigitalOcean Gradient AI key
-# - Go to DO Control Panel → API → Tokens
-# - Create a new token with Gradient AI access
-# - Update .env
+# GO: DO Control Panel → API → Tokens → Generate new token
+# Add to .env as GRADIENT_API_KEY
 
-# 9. Migrate auth code (see Section 10)
-# Replace server/replit_integrations/auth/replitAuth.ts
+# 9. Migrate auth code
+# Replace server/replit_integrations/auth/replitAuth.ts (see Section 9)
 
-# 10. Migrate Google Drive code (see Section 11)
-# Replace server/gdrive.ts
+# 10. Migrate Google Drive code
+# Replace server/gdrive.ts (see Section 10)
 
 # 11. Remove Replit-specific Vite plugins
-# Edit vite.config.ts - remove @replit/* plugins:
-#   - @replit/vite-plugin-cartographer
-#   - @replit/vite-plugin-runtime-error-modal
-#   - @replit/vite-plugin-dev-banner
+npm uninstall @replit/vite-plugin-cartographer @replit/vite-plugin-runtime-error-modal @replit/vite-plugin-dev-banner
 
 # 12. Start development server
 npm run dev
 # App runs at http://localhost:5000
 ```
 
-### Vite Config Changes
+### Vite Config After Migration
 
 Remove Replit-specific plugins from `vite.config.ts`:
 
@@ -917,31 +839,20 @@ export default defineConfig({
 });
 ```
 
-### Build Script Changes
-
-Remove Replit-specific packages from `script/build.ts` external list and remove the Replit vite plugins from devDependencies:
-
-```bash
-npm uninstall @replit/vite-plugin-cartographer @replit/vite-plugin-runtime-error-modal @replit/vite-plugin-dev-banner
-```
-
 ---
 
-## 13. DigitalOcean Deployment
+## 12. DigitalOcean Deployment
 
-### Option A: App Platform (Recommended — simplest)
+### Option A: App Platform (Recommended)
 
 1. **Create App** in DO Control Panel → App Platform
 2. **Source**: Connect your GitHub/GitLab repo
-3. **Build settings**:
-   - Build command: `npm run build`
-   - Run command: `npm run start` (which runs `node dist/index.cjs`)
-   - Output directory: `dist`
-4. **Environment**: Set all env vars from Section 9
+3. **Build settings**: Build command `npm run build`, Run command `npm run start`, Port `5000`
+4. **Environment**: Set all env vars from Section 8
 5. **Database**: Attach a Managed PostgreSQL cluster
-6. **Add Spaces**: Already set up separately (just needs env vars)
+6. **Spaces**: Already set up — just provide the env vars
 
-#### App Spec (app.yaml)
+#### App Spec (`app.yaml`)
 
 ```yaml
 name: currotter
@@ -1004,12 +915,12 @@ databases:
     version: "14"
 ```
 
-### Option B: Droplet (full control)
+### Option B: Droplet (Full Control)
 
 ```bash
 # 1. Create Ubuntu 22.04 Droplet
 
-# 2. Install Node.js
+# 2. Install Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
@@ -1053,14 +964,14 @@ EOF
 sudo systemctl enable currotter
 sudo systemctl start currotter
 
-# 8. Set up Nginx reverse proxy
+# 8. Set up Nginx with WebSocket + large upload support
 sudo apt-get install -y nginx
 sudo tee /etc/nginx/sites-available/currotter << 'EOF'
 server {
     listen 80;
     server_name currotter.yourdomain.com;
 
-    # WebSocket support
+    # WebSocket proxy (required for real-time progress)
     location /ws {
         proxy_pass http://127.0.0.1:5000;
         proxy_http_version 1.1;
@@ -1077,7 +988,8 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 200M;  # For image uploads
+        client_max_body_size 2600M;  # 250 files × 10 MB + buffer
+        proxy_read_timeout 600s;      # 250-photo jobs can take ~5 min
     }
 }
 EOF
@@ -1086,14 +998,14 @@ sudo ln -s /etc/nginx/sites-available/currotter /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 
-# 9. Set up SSL with Let's Encrypt
+# 9. Set up SSL
 sudo apt-get install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d currotter.yourdomain.com
 ```
 
 ---
 
-## 14. Dependencies
+## 13. Dependencies
 
 ### Production Dependencies
 
@@ -1103,29 +1015,26 @@ sudo certbot --nginx -d currotter.yourdomain.com
 | `express-session` | 1.19.0 | Session management |
 | `connect-pg-simple` | 10.0.0 | PostgreSQL session store |
 | `passport` | 0.7.0 | Authentication framework |
-| `openid-client` | 6.8.2 | OIDC client (Replit Auth — replace) |
+| `openid-client` | 6.8.2 | OIDC client (Replit Auth — replace on migration) |
 | `drizzle-orm` | 0.39.3 | Database ORM |
 | `pg` | 8.16.3 | PostgreSQL driver |
-| `@aws-sdk/client-s3` | 3.995.0 | DO Spaces (S3) client |
-| `sharp` | 0.34.5 | Image processing |
-| `image-hash` | 7.0.1 | Perceptual hashing |
-| `multer` | 2.0.2 | File upload middleware |
+| `@aws-sdk/client-s3` | 3.995.0 | DigitalOcean Spaces (S3) client |
+| `sharp` | 0.34.5 | Image processing (resize, blur detection, brightness) |
+| `image-hash` | 7.0.1 | Perceptual hashing for duplicate detection |
+| `multer` | 2.0.2 | File upload middleware (250 files, 10 MB each) |
 | `jszip` | 3.10.1 | ZIP archive creation |
 | `googleapis` | 148.0.0 | Google Drive API |
 | `ws` | 8.18.0 | WebSocket server |
 | `swagger-jsdoc` | 6.2.8 | Swagger spec generation |
 | `swagger-ui-express` | 5.0.1 | Swagger UI |
 | `zod` | 3.24.2 | Schema validation |
-| `memoizee` | 0.4.17 | Memoization utility |
 | `react` | 18.3.1 | UI library |
 | `react-dom` | 18.3.1 | React DOM renderer |
 | `wouter` | 3.3.5 | Client-side routing |
-| `@tanstack/react-query` | 5.60.5 | Data fetching/caching |
+| `@tanstack/react-query` | 5.60.5 | Data fetching + caching |
 | `framer-motion` | 11.13.1 | Animations |
 | `lucide-react` | 0.453.0 | Icon library |
-| `react-icons` | 5.4.0 | Additional icons |
-| `tailwind-merge` | 2.6.0 | Tailwind class merging |
-| `class-variance-authority` | 0.7.1 | Component variants |
+| `react-icons` | 5.4.0 | Additional icons (Google Drive logo) |
 
 ### Dev Dependencies to Remove (Replit-specific)
 
@@ -1133,7 +1042,7 @@ sudo certbot --nginx -d currotter.yourdomain.com
 npm uninstall @replit/vite-plugin-cartographer @replit/vite-plugin-runtime-error-modal @replit/vite-plugin-dev-banner
 ```
 
-### Dependencies to Add (for local auth)
+### Dependencies to Add (after auth migration)
 
 ```bash
 npm install passport-google-oauth20
@@ -1142,12 +1051,11 @@ npm install -D @types/passport-google-oauth20
 
 ---
 
-## 15. Build & Production
+## 14. Build & Production
 
 ### Build Process
 
 ```bash
-# Build both client and server
 npm run build
 
 # This runs script/build.ts which:
@@ -1158,12 +1066,11 @@ npm run build
 ### Production Start
 
 ```bash
-# Start production server
 npm run start
 # Equivalent to: NODE_ENV=production node dist/index.cjs
 ```
 
-### Production Behavior
+### Production Behaviour
 
 - Express serves static files from `dist/public/`
 - SPA fallback: all non-API routes serve `index.html`
@@ -1171,29 +1078,44 @@ npm run start
 
 ---
 
-## 16. Troubleshooting
+## 15. Troubleshooting
 
 ### Common Issues
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | `DATABASE_URL must be set` | Missing env var | Set `DATABASE_URL` in `.env` |
-| `OIDC discovery failed` | Replit Auth not available | Migrate to Google OAuth (Section 10) |
-| `Gradient API error 401` | Invalid or expired API key | Check `GRADIENT_API_KEY` |
-| `Spaces upload failed` | Wrong credentials or bucket | Verify `DO_SPACES_*` env vars |
-| `Google Drive not connected` | Replit connector unavailable | Migrate Drive integration (Section 11) |
-| `sharp` build errors | Missing native deps | Run `npm rebuild sharp` |
-| WebSocket not connecting | Nginx not configured | Add WebSocket proxy config |
-| Session cookie not setting | `secure: true` without HTTPS | Use HTTPS in production, or set `secure: false` for local dev |
+| `OIDC discovery failed` | Replit Auth not available | Migrate to Google OAuth (Section 9) |
+| `Gradient API error 401` | Invalid or expired key | Check `GRADIENT_API_KEY` |
+| `Spaces upload failed` | Wrong credentials or bucket | Verify all `DO_SPACES_*` env vars |
+| `Google Drive not connected` | Replit connector unavailable | Migrate Drive integration (Section 10) |
+| `sharp` build errors | Missing native dependencies | Run `npm rebuild sharp` |
+| WebSocket not connecting | Nginx not proxying WS | Add WebSocket location block (Section 12) |
+| Session cookie not setting | `secure: true` without HTTPS | Use HTTPS in production; set `secure: false` for local dev |
+| Upload rejected (too many files) | Client sends >250 files | Enforce 250-file limit on client before submitting |
+| Very slow processing (250 photos) | Expected — AI budget applies | Social ~4–5 min; Minimal ~3–4 min; advise batching by date |
 
 ### Key Files to Modify for Migration
 
-1. `server/replit_integrations/auth/replitAuth.ts` — Replace OIDC with Google OAuth
-2. `server/gdrive.ts` — Replace Replit connector with direct Google API
-3. `vite.config.ts` — Remove `@replit/*` plugins
-4. `package.json` — Remove Replit dev dependencies, add `passport-google-oauth20`
-5. `script/build.ts` — No changes needed (already generic)
+| File | What to change |
+|------|----------------|
+| `server/replit_integrations/auth/replitAuth.ts` | Replace Replit OIDC with Google OAuth (Section 9) |
+| `server/gdrive.ts` | Replace Replit connector with direct Google API (Section 10) |
+| `vite.config.ts` | Remove `@replit/*` plugins |
+| `package.json` | Remove Replit dev dependencies; add `passport-google-oauth20` |
+| `script/build.ts` | No changes needed |
+
+### AI Budget Tuning
+
+If you want to change the number of photos sent to the AI API, edit `server/routes.ts`:
+
+```typescript
+const AI_ANALYSIS_CAP: Record<"social" | "minimal", number> = {
+  social: 100,   // increase for more thorough AI coverage
+  minimal: 60,   // decrease for lower API cost
+};
+```
 
 ---
 
-*Document generated from Currotter codebase analysis. Last updated: February 2026.*
+*Last updated: March 2026. Reflects 250-photo support, smart AI budget system, and quality tier (Hero/Great/Good) features.*

@@ -1,115 +1,202 @@
-# Currotter - AI Photo Curator
+# Currotter — AI Photo Curator
 
 ## Overview
-Currotter is an AI-powered photo curation web app that removes duplicates, blurry, and low-quality images from event photo collections, then returns a curated album of the best shots. It uses a multi-agent AI pipeline to filter, analyze, and rank photos intelligently.
+Currotter is an AI-powered photo curation web app that removes duplicates, blurry, and low-quality images from event photo collections, then returns a curated album of the best shots. It supports up to 250 photos per session and uses a smart AI budget system to control cost while maintaining quality. A three-agent pipeline filters, analyzes, and ranks photos.
+
+---
 
 ## Architecture
 
+### System Architecture
+
+```mermaid
+flowchart TD
+    Browser["Browser\n(React + Vite)"]
+
+    subgraph Client
+        Landing["Landing Page\n(unauthenticated)"]
+        Home["Home Page\n(upload / progress / results)"]
+        Gallery["Results Gallery\n(lightbox + tier badges + export)"]
+    end
+
+    subgraph Server["Express Server (port 5000)"]
+        Auth["Auth Routes\n/api/login · /api/callback · /api/logout"]
+        API["API Routes\n/api/curate · /api/sessions · /api/download"]
+        WS["WebSocket /ws\n(real-time progress)"]
+        Pipeline["AI Pipeline Orchestrator\n(routes.ts)"]
+
+        subgraph Agents["Three-Agent Pipeline"]
+            F["1 · Filtering Agent\nperceptual hash · blur · brightness\n→ localScore pre-rank"]
+            Budget{{"AI Budget Router\nSocial: top 100 → AI\nMinimal: top 60 → AI\nRest → synthetic"}}
+            A["2 · Analysis Agent\nGradient AI GPT-4.1-mini\naesthetic score · scene desc\n76-dim embedding"]
+            Synth["Synthetic Scorer\nlocalScore → aesthetic proxy\ncolor embedding (no API cost)"]
+            D["3 · Decision Agent\ncosine clustering · weighted score\nquality tier (Hero/Great/Good)"]
+        end
+    end
+
+    subgraph External["External Services (DigitalOcean)"]
+        Spaces["DO Spaces\n(S3-compatible image store)"]
+        GradientAI["Gradient AI\nGPT-4.1-mini vision API"]
+        PG["PostgreSQL\n(users + sessions)"]
+    end
+
+    GDrive["Google Drive API"]
+
+    Browser --> Client
+    Client -->|"HTTP + WS"| Server
+    Auth --> PG
+    API --> Pipeline
+    Pipeline --> F --> Budget
+    Budget -->|"top N by localScore"| A --> D
+    Budget -->|"remaining"| Synth --> D
+    A --> GradientAI
+    Pipeline <-->|"upload / download"| Spaces
+    API -->|"export"| GDrive
+    WS -.->|"progress events"| Browser
+```
+
+### AI Pipeline Flow
+
+```mermaid
+flowchart LR
+    Upload(["User uploads\n1–250 photos"])
+
+    subgraph Stage1["Stage 1 · Filtering Agent"]
+        Hash["Perceptual Hash\nHamming distance\n≤30 bits = duplicate"]
+        Blur["Blur Detection\nLaplacian variance\nthreshold 100"]
+        Bright["Brightness Check\n< 0.08 too dark\n> 0.95 overexposed"]
+        LocalScore["Local Score\nblur 60% + brightness 40%\n→ pre-rank order"]
+    end
+
+    subgraph Stage2["Stage 2 · Analysis Agent"]
+        BudgetSplit{{"AI Budget Split"}}
+        AIPath["AI Analysis\nGPT-4.1-mini vision\naesthetic score 0–1\nscene description\n76-dim embedding"]
+        SynthPath["Synthetic Scoring\nlocal score → aesthetic proxy\ncolor histogram embedding\n(no API call)"]
+    end
+
+    subgraph Stage3["Stage 3 · Decision Agent"]
+        Cluster["Cosine Similarity\nClustering\nSocial 0.90 · Minimal 0.80"]
+        Score["Weighted Scoring\nfocus · aesthetic\nuniqueness · brightness"]
+        Select["Best-per-Cluster\nSocial: 2/cluster\nMinimal: 1/cluster"]
+        Tiers["Quality Tier\nHero top 15%\nGreat top 35%\nGood remainder"]
+    end
+
+    Results(["Curated Album\nwith tiers + reasons"])
+
+    Upload --> Stage1
+    Hash --> Blur --> Bright --> LocalScore
+    LocalScore --> BudgetSplit
+    BudgetSplit -->|"top 100 Social\ntop 60 Minimal"| AIPath
+    BudgetSplit -->|"remaining photos"| SynthPath
+    AIPath --> Cluster
+    SynthPath --> Cluster
+    Cluster --> Score --> Select --> Tiers --> Results
+```
+
+---
+
+## Module Map
+
 ### Frontend (React + TypeScript + Vite)
-- **Pages**: `client/src/pages/home.tsx` - Main upload/processing/results page
+- **Pages**: `client/src/pages/home.tsx` — Main upload/processing/results page
 - **Components**:
-  - `upload-zone.tsx` - Drag-and-drop file upload with preview grid
-  - `mode-selector.tsx` - Social vs Minimal curation mode picker
-  - `pipeline-progress.tsx` - Multi-stage processing visualization
-  - `results-gallery.tsx` - Curated photo gallery with lightbox + ZIP download
-  - `theme-provider.tsx` / `theme-toggle.tsx` - Dark/light mode
+  - `upload-zone.tsx` — Drag-and-drop upload (250 files, 10 MB each, time estimate)
+  - `mode-selector.tsx` — Social vs Minimal curation mode picker
+  - `pipeline-progress.tsx` — Multi-stage processing visualization
+  - `results-gallery.tsx` — Curated gallery: Hero/Great/Good tier badges, lightbox with keyboard nav, individual download, sort toggle
+  - `theme-provider.tsx` / `theme-toggle.tsx` — Dark/light mode
 
 ### Backend (Express + TypeScript)
-- **API Routes**: `server/routes.ts` - Upload endpoint, session status, ZIP download, Google Drive export
-- **Google Drive**: `server/gdrive.ts` - Google Drive integration via Replit connector for exporting curated photos
+- **API Routes**: `server/routes.ts` — Upload (250 files / 10 MB), AI budget logic, session status, ZIP download, Google Drive export
+- **Google Drive**: `server/gdrive.ts` — Google Drive integration via Replit connector
 - **Agent Pipeline** (`server/agents/`):
-  1. **Filtering Agent** (`filtering.ts`) - Perceptual hashing (duplicates), Laplacian blur detection, brightness scoring
-  2. **Analysis Agent** (`analysis.ts`) - DigitalOcean Gradient AI vision API for aesthetic scoring and scene description
-  3. **Decision Agent** (`decision.ts`) - Cosine similarity clustering, weighted scoring, best-per-cluster selection
-- **Storage**: `server/storage.ts` - In-memory session management
-- **Spaces**: `server/spaces.ts` - DigitalOcean Spaces (S3-compatible) for temporary image storage
+  1. **Filtering Agent** (`filtering.ts`) — Perceptual hashing (duplicates), Laplacian blur detection, brightness scoring, `localScore` computation
+  2. **Analysis Agent** (`analysis.ts`) — Gradient AI vision API; exports `generateVisualEmbedding` for synthetic results
+  3. **Decision Agent** (`decision.ts`) — Cosine similarity clustering, weighted scoring, best-per-cluster selection, `qualityTier` assignment
+- **Storage**: `server/storage.ts` — In-memory session management
+- **Spaces**: `server/spaces.ts` — DigitalOcean Spaces (S3-compatible) for temporary image storage
 
 ### Authentication (Replit Auth via OpenID Connect)
-- **Auth Module**: `server/replit_integrations/auth/` - OIDC-based auth with Passport.js
-  - `replitAuth.ts` - OIDC setup, login/callback/logout routes, token refresh, `isAuthenticated` middleware
-  - `storage.ts` - User upsert/get operations via Drizzle ORM
-  - `routes.ts` - `/api/auth/user` endpoint for current user info
-- **Database**: `server/db.ts` - PostgreSQL connection via Drizzle ORM
-- **Auth Models**: `shared/models/auth.ts` - `users` and `sessions` tables (Drizzle schema)
-- **Frontend Hook**: `client/src/hooks/use-auth.ts` - `useAuth()` hook for auth state
-- **Pages**: `client/src/pages/landing.tsx` - Landing page for unauthenticated users
+- **Auth Module**: `server/replit_integrations/auth/`
+  - `replitAuth.ts` — OIDC setup, login/callback/logout routes, token refresh, `isAuthenticated` middleware
+  - `storage.ts` — User upsert/get via Drizzle ORM
+  - `routes.ts` — `/api/auth/user` endpoint
+- **Database**: `server/db.ts` — PostgreSQL via Drizzle ORM
+- **Auth Models**: `shared/models/auth.ts` — `users` and `sessions` tables
+- **Frontend Hook**: `client/src/hooks/use-auth.ts` — `useAuth()` hook
+- **Pages**: `client/src/pages/landing.tsx` — Landing page for unauthenticated users
 
 ### Shared Types
-- `shared/schema.ts` - Zod schemas for ImageAnalysis, UploadSession, ProgressUpdate, CurateRequest + re-exports auth models
+- `shared/schema.ts` — Zod schemas for `ImageAnalysis` (includes `qualityTier`, `aiAnalyzed`), `UploadSession`, `ProgressUpdate`, `CurateRequest`
+
+---
 
 ## Key Technical Details
 
-### AI Pipeline Flow
-1. User uploads images → stored in DO Spaces
-2. Filtering Agent: perceptual hash → blur score → brightness score → remove bad images
-3. Analysis Agent: send to Gradient AI (GPT-4.1-mini vision) → get aesthetic scores + descriptions
-4. Decision Agent: generate embeddings → cosine similarity clustering → weighted scoring → select best per cluster
-5. Return curated set → user can download as ZIP
+### AI Budget System
+- After filtering, photos are sorted by `localScore` (blur 60% + brightness 40%).
+- Only the top-ranked photos go to the Gradient AI API: **100 for Social, 60 for Minimal**.
+- The remaining photos receive a **synthetic score**: `aestheticScore = localScore × 0.82 + 0.1`, plus a real 76-dim color embedding computed locally.
+- This means the clustering and decision steps work correctly for all photos, with API calls bounded regardless of upload size.
+
+### Quality Tiers
+- After cluster selection, `makeDecisions()` ranks selected photos by `finalScore`.
+- Top 15% → `"hero"`, next 35% → `"great"`, remainder → `"good"`.
+- Tiers are stored in `ImageAnalysis.qualityTier` and shown as badges in the gallery.
 
 ### Curation Modes
-- **Social**: More photos, variety-focused (2 per cluster, lower similarity threshold 0.85)
-- **Minimal**: Fewer photos, only the best (1 per cluster, lower threshold 0.7)
+- **Social**: 2 photos per cluster, cosine similarity threshold 0.90, AI cap 100
+- **Minimal**: 1 photo per cluster, cosine similarity threshold 0.80, AI cap 60
 
 ### WebSocket
 - `/ws` endpoint for real-time progress updates during processing
+- HTTP polling fallback activates automatically when WebSocket is unavailable
+
+---
 
 ## Environment Variables (Secrets)
-- `DO_SPACES_KEY` - DigitalOcean Spaces access key
-- `DO_SPACES_SECRET` - DigitalOcean Spaces secret key
-- `DO_SPACES_ENDPOINT` - Spaces endpoint
-- `DO_SPACES_BUCKET` - Spaces bucket name
-- `GRADIENT_API_KEY` - DigitalOcean Gradient AI API key
-- `SESSION_SECRET` - Express session encryption key
-- `DATABASE_URL` - PostgreSQL connection string (auto-provisioned)
+- `DO_SPACES_KEY` — DigitalOcean Spaces access key
+- `DO_SPACES_SECRET` — DigitalOcean Spaces secret key
+- `DO_SPACES_ENDPOINT` — Spaces endpoint
+- `DO_SPACES_BUCKET` — Spaces bucket name
+- `GRADIENT_API_KEY` — DigitalOcean Gradient AI API key
+- `SESSION_SECRET` — Express session encryption key
+- `DATABASE_URL` — PostgreSQL connection string (auto-provisioned on Replit)
 
 ## Running
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
+---
+
 ## Recent Changes
-- 2026-03-13: 250-photo support with smart AI budget:
-  - Upload limit raised to 250 files (was 50); per-file cap lowered to 10MB (was 20MB) to match backend
-  - Smart AI budget: top 100 photos (Social) / top 60 (Minimal) get full GPT-4.1-mini vision analysis; remaining photos receive synthetic scores from local blur+brightness metrics + real color embeddings — no extra API cost
-  - Decision agent now assigns `qualityTier` (hero/great/good) to every selected photo based on score percentile (top 15% = hero, top 35% = great)
-  - `aiAnalyzed` flag tracks which photos used real AI vs local scoring
-  - Results gallery shows Hero/Great tier badges on gallery cards (non-Best photos); lightbox shows tier badge + "Local score" label for non-AI photos
-  - Upload zone shows estimated processing time (~1 min for ≤30 photos up to ~4–5 min for 250)
-  - Shared schema updated: `qualityTier` and `aiAnalyzed` fields added to imageAnalysisSchema
-- 2026-03-13: Architecture & feature improvements:
-  - Fixed 5 TypeScript errors in server/routes.ts (Set/Map iteration + params type narrowing)
-  - Fixed URL.createObjectURL memory leak in upload-zone.tsx (object URLs now tracked and revoked on unmount/clear)
-  - Removed redundant dual-progress system: WebSocket is now primary; polling only activates as fallback when WS unavailable
-  - Added dedicated error state (AppState "error") in home.tsx with descriptive message and "Try Again" button
-  - Upload zone improvements: file size display per image, total size counter, slots-remaining warning, 50-file cap enforcement
-  - Results gallery improvements:
-    - Keyboard navigation in lightbox (← → arrow keys, Escape to close)
-    - Gallery sorted by score (best photos first) with a sort toggle (By Score / A-Z)
-    - "Best" badge on highest-scoring photo
-    - Scene description shown in lightbox (from AI analysis)
-    - Individual photo download button in lightbox
-    - Aesthetic score shown alongside composite score in lightbox
-    - Navigation keyboard hint overlay in lightbox
-- 2026-02-23: Added photo selection explanations:
-  - Each curated photo now includes a `selectionReason` explaining why it was kept
-  - Reasons generated based on aesthetic score, sharpness, lighting, uniqueness, and cluster comparison
-  - Displayed on hover in gallery grid and in lightbox view with Info icon
-- 2026-02-23: Added Terms & Conditions and Privacy Policy pages:
-  - `/terms` and `/privacy` routes accessible regardless of auth state
-  - Footer links on landing page to both legal pages
-  - Covers AI processing, Google Drive integration, data retention, user rights
-- 2026-02-23: Added Google Drive export feature:
-  - New "Save to Google Drive" button in results gallery alongside ZIP download
-  - POST /api/sessions/:id/export-drive endpoint creates Drive folder and uploads curated photos
-  - After export, button changes to "Open in Drive" link to the created folder
-  - Uses Replit Google Drive connector for secure OAuth token management
-- 2026-02-23: Added Replit Auth (OpenID Connect) with Google login support:
-  - Landing page with hero, features, how-it-works sections for logged-out users
-  - Protected API endpoints with isAuthenticated middleware
-  - User profile display and logout button in app header
-  - PostgreSQL-backed session store and user table via Drizzle ORM
-- 2026-02-23: Fixed duplicate detection and similarity clustering algorithms:
-  - Perceptual hash Hamming distance now operates at bit level (was comparing hex chars)
-  - Duplicate detection uses canonical representative tracking to properly handle replacement
-  - Image embeddings now use color histograms + 4x4 spatial features + HSL averages (was sampling raw JPEG bytes)
-  - Clustering thresholds tuned: Social 0.90, Minimal 0.80 cosine similarity
-  - Added comprehensive logging throughout the pipeline
-- 2026-02-21: Initial MVP implementation with full AI pipeline, upload UI, processing visualization, and results gallery
+
+### 2026-03-13 — 250-photo support with smart AI budget
+- Upload limit raised to 250 files (was 50); per-file cap lowered to 10 MB (was 20 MB)
+- Smart AI budget: top 100 (Social) / top 60 (Minimal) photos → GPT-4.1-mini vision; rest → synthetic local score + color embedding (no API cost)
+- Decision agent assigns `qualityTier` (hero/great/good) by score percentile (top 15% = hero, top 35% = great)
+- `aiAnalyzed` flag on each `ImageAnalysis` tracks which photos used real AI
+- Results gallery: Hero/Great badges on cards; lightbox shows tier + "Local score" label for non-AI photos
+- Upload zone: estimated processing time display (~1 min ≤30 photos → ~4–5 min for 250)
+- `shared/schema.ts`: added `qualityTier` and `aiAnalyzed` to `imageAnalysisSchema`
+
+### 2026-03-13 — Architecture & feature improvements
+- Fixed 5 TypeScript errors in `server/routes.ts` (Set/Map iteration + params type narrowing)
+- Fixed URL.createObjectURL memory leak in `upload-zone.tsx`
+- Removed redundant dual-progress system (WS primary, polling fallback only)
+- Added dedicated error state (`AppState "error"`) with retry button in `home.tsx`
+- Upload zone: file size per image, total size counter, slots-remaining warning
+- Results gallery: keyboard nav (← → Esc), sort by score/name, "Best" badge, scene description + individual download in lightbox, aesthetic score display
+
+### 2026-02-23 — Selection explanations, Google Drive, Replit Auth
+- `selectionReason` on every curated photo (hover in grid + lightbox Info icon)
+- Terms & Conditions (`/terms`) and Privacy Policy (`/privacy`) pages
+- Google Drive export with "Save to Drive" → "Open in Drive" button flow
+- Replit Auth OIDC integration, landing page, protected API endpoints, PostgreSQL session store
+
+### 2026-02-23 — Algorithm fixes
+- Perceptual hash Hamming distance now bit-level (was hex-char comparison)
+- Color histogram embeddings (was raw JPEG byte sampling)
+- Clustering thresholds tuned: Social 0.90, Minimal 0.80
+
+### 2026-02-21 — Initial MVP
+- Full AI pipeline, upload UI, processing visualization, results gallery
