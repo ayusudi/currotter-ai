@@ -125,7 +125,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 border-t bg-muted/30">
+      <section id="features" className="py-20 px-4 sm:px-6 lg:px-8 border-t bg-muted/30 bg-dots">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16 space-y-3">
             <motion.div
@@ -250,7 +250,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="py-20 px-4 sm:px-6 lg:px-8 border-t bg-muted/30">
+      <section className="py-20 px-4 sm:px-6 lg:px-8 border-t bg-muted/30 bg-grid-sm">
         <div className="max-w-3xl mx-auto text-center space-y-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}

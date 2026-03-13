@@ -2,6 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .bg-dots {
+    background-image: radial-gradient(hsl(174 60% 40% / 0.10) 1.5px, transparent 1.5px);
+    background-size: 22px 22px;
+  }
+  .dark .bg-dots {
+    background-image: radial-gradient(hsl(174 60% 65% / 0.12) 1.5px, transparent 1.5px);
+  }
+  .bg-grid-sm {
+    background-image:
+      linear-gradient(hsl(174 60% 40% / 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(174 60% 40% / 0.07) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  .dark .bg-grid-sm {
+    background-image:
+      linear-gradient(hsl(174 60% 65% / 0.09) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(174 60% 65% / 0.09) 1px, transparent 1px);
+  }
+}
+
 /* LIGHT MODE */
 :root {
   --button-outline: rgba(0,0,0, .10);

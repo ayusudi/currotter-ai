@@ -156,15 +156,15 @@ export default function Privacy() {
         </div>
       </main>
 
-      <footer className="py-8 px-4 sm:px-6 lg:px-8 border-t">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      <footer className="border-t">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <img src="/images/otter-welcome.png" alt="Currotter" className="h-5 w-5 object-contain" />
             <span className="font-semibold">Currotter</span>
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <Link href="/terms" className="hover:text-foreground transition-colors">Terms</Link>
-            <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <Link href="/terms" className="hover:text-foreground transition-colors">Terms & Conditions</Link>
+            <Link href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
           </div>
           <p className="text-sm text-muted-foreground">&copy; 2026 Currotter. All rights reserved.</p>
         </div>
