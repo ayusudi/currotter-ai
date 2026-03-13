@@ -8,6 +8,7 @@ export interface FilterResult {
   perceptualHash: string;
   blurScore: number;
   brightnessScore: number;
+  localScore: number;
   isDuplicate: boolean;
   isBlurry: boolean;
   isTooLow: boolean;
@@ -93,6 +94,26 @@ async function computeBrightness(buffer: Buffer): Promise<number> {
   return totalBrightness / pixelCount / 255;
 }
 
+/**
+ * Compute a local quality score without any AI API calls.
+ * Combines focus sharpness (60%) and brightness quality (40%).
+ * Range: 0.0 – 1.0. Used to pre-rank images for AI budget allocation.
+ */
+function computeLocalScore(blurScore: number, brightnessScore: number): number {
+  const normalizedBlur = Math.min(1, blurScore / 1000);
+
+  let brightnessFactor: number;
+  if (brightnessScore >= 0.25 && brightnessScore <= 0.80) {
+    brightnessFactor = 1.0;
+  } else if (brightnessScore >= 0.15 && brightnessScore <= 0.90) {
+    brightnessFactor = 0.75;
+  } else {
+    brightnessFactor = 0.4;
+  }
+
+  return normalizedBlur * 0.6 + brightnessFactor * 0.4;
+}
+
 const DUPLICATE_THRESHOLD = 30;
 const BLUR_THRESHOLD = 100;
 const BRIGHTNESS_LOW = 0.08;
@@ -160,19 +181,22 @@ export async function filterImages(
       if (isBlurry && !isDuplicate) blurryRemoved++;
       if (isTooLow && !isDuplicate && !isBlurry) lowBrightnessRemoved++;
 
+      const localScore = computeLocalScore(blurScore, brightnessScore);
+
       results.push({
         id: img.id,
         filename: img.filename,
         perceptualHash: hash,
         blurScore,
         brightnessScore,
+        localScore,
         isDuplicate,
         isBlurry,
         isTooLow,
         buffer: img.buffer,
       });
 
-      log(`  [${i + 1}/${images.length}] ${img.filename}: blur=${blurScore.toFixed(1)}, bright=${brightnessScore.toFixed(3)}, dup=${isDuplicate}${isDuplicate ? ` (dist=${bestDistance})` : ""}, blurry=${isBlurry}, hash=${hash.substring(0, 8)}...`, "filter-agent");
+      log(`  [${i + 1}/${images.length}] ${img.filename}: blur=${blurScore.toFixed(1)}, bright=${brightnessScore.toFixed(3)}, local=${localScore.toFixed(3)}, dup=${isDuplicate}${isDuplicate ? ` (dist=${bestDistance})` : ""}, blurry=${isBlurry}`, "filter-agent");
     } catch (err: any) {
       log(`  Error processing ${img.filename}: ${err.message}`, "filter-agent");
     }

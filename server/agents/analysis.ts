@@ -94,7 +94,7 @@ Scoring criteria:
   }
 }
 
-async function generateVisualEmbedding(
+export async function generateVisualEmbedding(
   buffer: Buffer,
   aestheticScore: number,
   sceneDescription: string

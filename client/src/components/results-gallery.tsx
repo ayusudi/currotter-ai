@@ -21,6 +21,14 @@ function scoreColor(score: number): string {
   return "text-muted-foreground";
 }
 
+function tierConfig(tier?: "hero" | "great" | "good") {
+  switch (tier) {
+    case "hero": return { label: "Hero", className: "bg-amber-500 text-white border-0" };
+    case "great": return { label: "Great", className: "bg-primary/80 text-primary-foreground border-0" };
+    default: return null;
+  }
+}
+
 function downloadSingleImage(url: string, filename: string) {
   const a = document.createElement("a");
   a.href = url;
@@ -158,14 +166,22 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportD
                 <Maximize2 className="w-4 h-4 text-white" />
               </div>
             </div>
-            {idx === 0 && sortBy === "score" && (
-              <div className="absolute top-2 left-2">
-                <Badge className="text-[10px] bg-primary text-primary-foreground border-0 gap-0.5">
+            <div className="absolute top-2 left-2 flex flex-col gap-1">
+              {idx === 0 && sortBy === "score" && (
+                <Badge className="text-[10px] bg-primary text-primary-foreground border-0 gap-0.5" data-testid={`badge-best-${idx}`}>
                   <Star className="w-3 h-3" />
                   Best
                 </Badge>
-              </div>
-            )}
+              )}
+              {img.qualityTier && img.qualityTier !== "good" && !(idx === 0 && sortBy === "score") && (() => {
+                const tc = tierConfig(img.qualityTier);
+                return tc ? (
+                  <Badge className={`text-[10px] gap-0.5 ${tc.className}`} data-testid={`badge-tier-${idx}`}>
+                    {tc.label}
+                  </Badge>
+                ) : null;
+              })()}
+            </div>
           </motion.div>
         ))}
       </div>
@@ -255,6 +271,19 @@ export function ResultsGallery({ images, onDownloadZip, isDownloading, onExportD
                 {lightboxImg.aestheticScore !== undefined && (
                   <Badge variant="outline" className="text-xs text-white/70 border-white/20">
                     Aesthetic {(lightboxImg.aestheticScore * 100).toFixed(0)}%
+                  </Badge>
+                )}
+                {lightboxImg.qualityTier && lightboxImg.qualityTier !== "good" && (() => {
+                  const tc = tierConfig(lightboxImg.qualityTier);
+                  return tc ? (
+                    <Badge className={`text-xs ${tc.className}`} data-testid="badge-lightbox-tier">
+                      {tc.label}
+                    </Badge>
+                  ) : null;
+                })()}
+                {lightboxImg.aiAnalyzed === false && (
+                  <Badge variant="outline" className="text-xs text-white/40 border-white/10" title="Scored using local analysis">
+                    Local score
                   </Badge>
                 )}
                 <span className="text-xs text-white/50">

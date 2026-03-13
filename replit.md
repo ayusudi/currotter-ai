@@ -66,6 +66,14 @@ Currotter is an AI-powered photo curation web app that removes duplicates, blurr
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ## Recent Changes
+- 2026-03-13: 250-photo support with smart AI budget:
+  - Upload limit raised to 250 files (was 50); per-file cap lowered to 10MB (was 20MB) to match backend
+  - Smart AI budget: top 100 photos (Social) / top 60 (Minimal) get full GPT-4.1-mini vision analysis; remaining photos receive synthetic scores from local blur+brightness metrics + real color embeddings — no extra API cost
+  - Decision agent now assigns `qualityTier` (hero/great/good) to every selected photo based on score percentile (top 15% = hero, top 35% = great)
+  - `aiAnalyzed` flag tracks which photos used real AI vs local scoring
+  - Results gallery shows Hero/Great tier badges on gallery cards (non-Best photos); lightbox shows tier badge + "Local score" label for non-AI photos
+  - Upload zone shows estimated processing time (~1 min for ≤30 photos up to ~4–5 min for 250)
+  - Shared schema updated: `qualityTier` and `aiAnalyzed` fields added to imageAnalysisSchema
 - 2026-03-13: Architecture & feature improvements:
   - Fixed 5 TypeScript errors in server/routes.ts (Set/Map iteration + params type narrowing)
   - Fixed URL.createObjectURL memory leak in upload-zone.tsx (object URLs now tracked and revoked on unmount/clear)

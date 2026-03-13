@@ -35,6 +35,8 @@ export const imageAnalysisSchema = z.object({
   clusterId: z.number().optional(),
   finalScore: z.number().optional(),
   selectionReason: z.string().optional(),
+  qualityTier: z.enum(["hero", "great", "good"]).optional(),
+  aiAnalyzed: z.boolean().optional(),
   isDuplicate: z.boolean().default(false),
   isBlurry: z.boolean().default(false),
   isTooLow: z.boolean().default(false),

@@ -14,6 +14,8 @@ export interface ScoredImage {
   sceneDescription: string;
   selectionReason: string;
   embedding: number[];
+  qualityTier: "hero" | "great" | "good";
+  aiAnalyzed: boolean;
 }
 
 function generateSelectionReason(
@@ -152,7 +154,8 @@ function computeWeightedScore(
 export function makeDecisions(
   filterResults: FilterResult[],
   analysisResults: AnalysisResult[],
-  mode: "social" | "minimal"
+  mode: "social" | "minimal",
+  aiAnalyzedIds?: Set<string>
 ): ScoredImage[] {
   log(`Decision Agent: Processing ${filterResults.length} images in "${mode}" mode`, "decision-agent");
 
@@ -204,6 +207,7 @@ export function makeDecisions(
     const analysis = analysisMap.get(f.id);
     const clusterId = clusters.get(f.id) ?? 0;
     const uniqueness = uniquenessScores.get(f.id) ?? 1;
+    const isAiAnalyzed = aiAnalyzedIds ? aiAnalyzedIds.has(f.id) : !!analysis;
 
     const finalScore = computeWeightedScore(
       f.blurScore,
@@ -225,6 +229,8 @@ export function makeDecisions(
       sceneDescription: analysis?.sceneDescription ?? "",
       selectionReason: "",
       embedding: analysis?.embedding ?? [],
+      qualityTier: "good" as const,
+      aiAnalyzed: isAiAnalyzed,
     };
   });
 
@@ -262,6 +268,26 @@ export function makeDecisions(
 
   const selected = scored.filter((s: ScoredImage) => s.isSelected);
   log(`Decision Agent: Selected ${selected.length}/${scored.length} images across ${clusterEntries.length} clusters`, "decision-agent");
+
+  if (selected.length > 0) {
+    const sortedByScore = [...selected].sort((a, b) => b.finalScore - a.finalScore);
+    const heroCount = Math.max(1, Math.ceil(selected.length * 0.15));
+    const greatCount = Math.max(1, Math.ceil(selected.length * 0.35));
+
+    sortedByScore.forEach((img, rank) => {
+      const original = scored.find(s => s.id === img.id)!;
+      if (rank < heroCount) {
+        original.qualityTier = "hero";
+      } else if (rank < heroCount + greatCount) {
+        original.qualityTier = "great";
+      } else {
+        original.qualityTier = "good";
+      }
+    });
+
+    const heroImages = scored.filter(s => s.isSelected && s.qualityTier === "hero");
+    log(`  Quality tiers: ${heroImages.length} hero, ${selected.filter(s => s.qualityTier === "great").length} great, ${selected.filter(s => s.qualityTier === "good").length} good`, "decision-agent");
+  }
 
   return scored;
 }

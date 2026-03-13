@@ -11,8 +11,8 @@ interface UploadZoneProps {
   onClearAll: () => void;
 }
 
-const MAX_FILES = 50;
-const MAX_FILE_SIZE_MB = 20;
+const MAX_FILES = 250;
+const MAX_FILE_SIZE_MB = 10;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -153,6 +153,11 @@ export function UploadZone({ onFilesSelected, isUploading, selectedFiles, onRemo
                 {slotsLeft <= 10 && slotsLeft > 0 && (
                   <span className="text-yellow-600 dark:text-yellow-400 font-medium">
                     {slotsLeft} slot{slotsLeft !== 1 ? "s" : ""} left
+                  </span>
+                )}
+                {selectedFiles.length > 0 && (
+                  <span className="text-muted-foreground/70" data-testid="text-time-estimate" title="Estimated processing time">
+                    ~{selectedFiles.length <= 30 ? "1" : selectedFiles.length <= 80 ? "2" : selectedFiles.length <= 150 ? "3–4" : "4–5"} min
                   </span>
                 )}
               </div>

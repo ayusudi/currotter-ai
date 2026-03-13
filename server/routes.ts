@@ -7,16 +7,26 @@ import JSZip from "jszip";
 import { storage } from "./storage";
 import { uploadToSpaces, getFromSpaces } from "./spaces";
 import { filterImages } from "./agents/filtering";
-import { analyzeImages } from "./agents/analysis";
+import { analyzeImages, generateVisualEmbedding } from "./agents/analysis";
 import { makeDecisions } from "./agents/decision";
 import { log } from "./index";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { uploadToDrive } from "./gdrive";
 import type { ImageAnalysis } from "@shared/schema";
 
+const MAX_UPLOAD_FILES = 250;
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per file
+
+// AI API call budget per mode — controls cost vs thoroughness tradeoff.
+// Photos above this count are scored using local quality metrics only (fast, free).
+const AI_ANALYSIS_CAP: Record<"social" | "minimal", number> = {
+  social: 100,
+  minimal: 60,
+};
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, files: 50 },
+  limits: { fileSize: MAX_FILE_SIZE_BYTES, files: MAX_UPLOAD_FILES },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
@@ -571,6 +581,8 @@ async function processCurationPipeline(
           isBlurry: false,
           isTooLow: false,
           finalScore: 0.5,
+          qualityTier: "good" as const,
+          aiAnalyzed: false,
           selectionReason: "All photos kept — no filtering needed for this set.",
         } as ImageAnalysis;
       });
@@ -578,43 +590,74 @@ async function processCurationPipeline(
       storage.updateSession(sessionId, {
         status: "completed",
         curatedImages: allImages,
-        stats: {
-          ...filterResult.stats,
-          totalRemoved: 0,
-          clustersFound: 1,
-        },
+        stats: { ...filterResult.stats, totalRemoved: 0, clustersFound: 1 },
       });
 
       broadcastProgress(sessionId, {
         sessionId,
         stage: "completed",
         progress: 100,
-        message: "No images filtered - returning all images",
+        message: "Curation complete!",
         stats: { ...filterResult.stats, totalRemoved: 0, clustersFound: 1 },
       });
       return;
     }
+
+    // --- Smart AI Budget ---
+    // Sort passed images by local quality score (highest first).
+    // Only send the top N to the AI API to control cost.
+    // Remaining photos receive a synthetic score derived from their local metrics.
+    const aiCap = AI_ANALYSIS_CAP[mode];
+    const sortedByLocalScore = [...passedImages].sort((a, b) => b.localScore - a.localScore);
+    const aiImages = sortedByLocalScore.slice(0, aiCap);
+    const localOnlyImages = sortedByLocalScore.slice(aiCap);
+    const aiAnalyzedIds = new Set(aiImages.map(i => i.id));
+
+    const willUseBudget = localOnlyImages.length > 0;
+    log(
+      `AI Budget: ${aiImages.length} images → AI analysis, ${localOnlyImages.length} images → local scoring only (cap=${aiCap}, mode=${mode})`,
+      "routes"
+    );
 
     storage.updateSession(sessionId, { status: "analyzing" });
     broadcastProgress(sessionId, {
       sessionId,
       stage: "analyzing",
       progress: 50,
-      message: "AI analyzing image aesthetics...",
+      message: willUseBudget
+        ? `AI analyzing top ${aiImages.length} photos (${localOnlyImages.length} scored locally)...`
+        : "AI analyzing image aesthetics...",
     });
 
-    const analysisResults = await analyzeImages(
-      passedImages.map(p => ({ id: p.id, filename: p.filename, buffer: p.buffer })),
+    const aiAnalysisResults = await analyzeImages(
+      aiImages.map(p => ({ id: p.id, filename: p.filename, buffer: p.buffer })),
       (processed) => {
         storage.updateSession(sessionId, { processedImages: processed });
         broadcastProgress(sessionId, {
           sessionId,
           stage: "analyzing",
-          progress: 50 + (processed / passedImages.length) * 25,
-          message: `Analyzing ${processed}/${passedImages.length}...`,
+          progress: 50 + (processed / aiImages.length) * 25,
+          message: `AI analyzing ${processed}/${aiImages.length} photos...`,
         });
       }
     );
+
+    // Generate synthetic AnalysisResults for local-only images (no API call).
+    // Uses local score as aesthetic proxy and still computes a real embedding.
+    const syntheticResults = await Promise.all(
+      localOnlyImages.map(async (img) => {
+        const syntheticAesthetic = Math.min(0.92, img.localScore * 0.82 + 0.1);
+        const embedding = await generateVisualEmbedding(img.buffer, syntheticAesthetic, "Photo");
+        return {
+          id: img.id,
+          aestheticScore: syntheticAesthetic,
+          sceneDescription: "Photo",
+          embedding,
+        };
+      })
+    );
+
+    const analysisResults = [...aiAnalysisResults, ...syntheticResults];
 
     storage.updateSession(sessionId, { status: "deciding" });
     broadcastProgress(sessionId, {
@@ -624,7 +667,7 @@ async function processCurationPipeline(
       message: "Making final selections...",
     });
 
-    const decisions = makeDecisions(passedImages, analysisResults, mode);
+    const decisions = makeDecisions(passedImages, analysisResults, mode, aiAnalyzedIds);
     const selected = decisions.filter(d => d.isSelected);
 
     const clustersFound = new Set(decisions.map(d => d.clusterId)).size;
@@ -646,6 +689,8 @@ async function processCurationPipeline(
         sceneDescription: s.sceneDescription,
         finalScore: s.finalScore,
         selectionReason: s.selectionReason,
+        qualityTier: s.qualityTier,
+        aiAnalyzed: s.aiAnalyzed,
         isDuplicate: false,
         isBlurry: false,
         isTooLow: false,
