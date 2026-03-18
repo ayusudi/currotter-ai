@@ -258,7 +258,7 @@ export default function Landing() {
                 step: "1",
                 img: "/images/otter-upload.png",
                 title: "Upload your photos",
-                desc: "Drag and drop up to 50 images at once. We accept JPEG, PNG, WebP, and more.",
+                desc: "Drag and drop up to 250 images at once. We accept JPEG, PNG, WebP, and more.",
                 testId: "step-upload",
               },
               {
