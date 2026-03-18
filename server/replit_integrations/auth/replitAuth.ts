@@ -31,9 +31,18 @@ const getOidcConfig = memoize(
     }
 
     // Replit OIDC fallback (for development inside Replit)
+    const replId = process.env.REPL_ID;
+    if (!replId) {
+      throw new Error(
+        "Authentication is not configured. " +
+        "Running inside Replit? REPL_ID is auto-set — make sure the Replit environment is active. " +
+        "Deploying outside Replit (DigitalOcean, VPS)? Set AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET. " +
+        "See docs/deploy-digitalocean.md for setup instructions."
+      );
+    }
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
+      replId
     );
   },
   { maxAge: 3600 * 1000 }

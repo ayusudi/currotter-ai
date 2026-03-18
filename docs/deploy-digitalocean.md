@@ -2,7 +2,18 @@
 
 Dokumen ini menjelaskan semua environment variable yang dibutuhkan dan langkah-langkah deploy ke DigitalOcean App Platform.
 
-> **Catatan Autentikasi:** Currotter saat ini menggunakan Replit Auth (OpenID Connect) yang hanya berjalan di lingkungan Replit. Untuk deploy ke DigitalOcean atau server lain, sistem autentikasi perlu diganti (misalnya Auth0, Clerk, atau implementasi OIDC sendiri). Lihat panduan lengkap di [`MIGRATION_GUIDE.md`](../MIGRATION_GUIDE.md) — Bagian 9 (Authentication Migration).
+---
+
+## Cara Kerja Autentikasi
+
+Aplikasi mendukung **dua mode autentikasi** — dipilih otomatis berdasarkan environment variable:
+
+| Kondisi | Provider yang Dipakai |
+|---|---|
+| `AUTH0_DOMAIN` **diset** | Auth0 (untuk production di DigitalOcean / VPS) |
+| `AUTH0_DOMAIN` **tidak diset** | Replit Auth (untuk development di Replit) |
+
+Jadi untuk deploy ke DigitalOcean, kamu cukup mengisi variabel Auth0 — tidak perlu mengubah kode apapun.
 
 ---
 
@@ -23,7 +34,7 @@ Tempat penyimpanan sementara foto selama proses kurasi. Buat bucket di [cloud.di
 
 ### Kelompok 2 — Gradient AI
 
-API key untuk vision model GPT-4.1-mini yang melakukan aesthetic scoring. Dapatkan di [cloud.digitalocean.com/gen-ai](https://cloud.digitalocean.com/gen-ai).
+API key untuk vision model GPT-4.1-mini. Dapatkan di [cloud.digitalocean.com/gen-ai](https://cloud.digitalocean.com/gen-ai).
 
 | Variable | Contoh Nilai | Keterangan |
 |---|---|---|
@@ -32,8 +43,6 @@ API key untuk vision model GPT-4.1-mini yang melakukan aesthetic scoring. Dapatk
 ---
 
 ### Kelompok 3 — Database
-
-PostgreSQL untuk menyimpan data user dan session.
 
 | Variable | Contoh Nilai | Keterangan |
 |---|---|---|
@@ -60,9 +69,40 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ---
 
-### Kelompok 5 — Google Drive Export (per-user OAuth)
+### Kelompok 5 — Auth0 (Wajib untuk Deploy di Luar Replit)
 
-Memungkinkan setiap user mengekspor foto ke **Google Drive mereka sendiri** — bukan ke akun developer. Server hanya menyimpan Client ID dan Secret; token akses tiap user disimpan di session mereka masing-masing dan tidak pernah tersimpan di server secara permanen.
+Menggantikan Replit Auth yang hanya berjalan di lingkungan Replit.
+
+| Variable | Contoh Nilai | Keterangan |
+|---|---|---|
+| `AUTH0_DOMAIN` | `dev-abc123.us.auth0.com` | Domain dari Auth0 tenant kamu |
+| `AUTH0_CLIENT_ID` | `xxxxxabc123` | Client ID dari Auth0 Application |
+| `AUTH0_CLIENT_SECRET` | `xxxxxsecret` | Client Secret dari Auth0 Application |
+
+#### Cara Setup Auth0 (5 menit):
+
+1. Daftar gratis di [auth0.com](https://auth0.com) → buat tenant baru
+2. Pergi ke **Applications → Create Application**
+3. Pilih **"Regular Web Application"** → pilih Node.js
+4. Di tab **Settings**, catat nilai:
+   - **Domain** → `AUTH0_DOMAIN`
+   - **Client ID** → `AUTH0_CLIENT_ID`
+   - **Client Secret** → `AUTH0_CLIENT_SECRET`
+5. Di kolom **"Allowed Callback URLs"**, tambahkan:
+   ```
+   https://nama-app-kamu.ondigitalocean.app/api/callback
+   ```
+6. Di kolom **"Allowed Logout URLs"**, tambahkan:
+   ```
+   https://nama-app-kamu.ondigitalocean.app
+   ```
+7. Klik **Save Changes**
+
+---
+
+### Kelompok 6 — Google Drive Export (per-user OAuth)
+
+Memungkinkan setiap user mengekspor foto ke **Google Drive mereka sendiri**. Server hanya menyimpan Client ID dan Secret — tidak ada refresh token yang disimpan di server.
 
 | Variable | Contoh Nilai | Keterangan |
 |---|---|---|
@@ -72,7 +112,7 @@ Memungkinkan setiap user mengekspor foto ke **Google Drive mereka sendiri** — 
 #### Cara Setup Google OAuth (5 menit):
 
 1. Buka [console.cloud.google.com](https://console.cloud.google.com)
-2. Buat atau pilih project → **APIs & Services → Library**
+2. Pilih atau buat project → **APIs & Services → Library**
 3. Cari **"Google Drive API"** → klik **Enable**
 4. Pergi ke **APIs & Services → Credentials → + Create Credentials → OAuth 2.0 Client IDs**
 5. Application type: **Web application**
@@ -82,7 +122,7 @@ Memungkinkan setiap user mengekspor foto ke **Google Drive mereka sendiri** — 
    ```
 7. Klik **Create** → salin **Client ID** dan **Client Secret**
 
-> **Tidak ada refresh token yang dibutuhkan.** Aplikasi menggunakan `access_type: online` — token hanya berlaku per-sesi dan langsung dipakai untuk upload, tidak disimpan di database.
+> Tidak perlu refresh token. Aplikasi menggunakan `access_type: online` — token hanya berlaku per-sesi dan langsung dipakai untuk upload, tanpa disimpan di database.
 
 ---
 
@@ -104,12 +144,17 @@ DATABASE_URL=postgresql://...
 # Session
 SESSION_SECRET=
 
-# Google Drive (per-user OAuth)
+# Auth0 (wajib untuk deploy di luar Replit)
+AUTH0_DOMAIN=dev-xxx.us.auth0.com
+AUTH0_CLIENT_ID=
+AUTH0_CLIENT_SECRET=
+
+# Google Drive (per-user OAuth — tidak perlu refresh token)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 ```
 
-**Total: 9 variables** — tidak ada refresh token, tidak ada Auth0.
+**Total: 12 variables** — 4 Spaces, 1 Gradient AI, 1 Database, 1 Session, 3 Auth0, 2 Google Drive.
 
 ---
 
@@ -121,7 +166,7 @@ GOOGLE_CLIENT_SECRET=
 4. Set konfigurasi build:
    - **Build Command:** `npm run build`
    - **Run Command:** `node dist/index.cjs`
-5. Tambahkan semua 9 environment variables di atas
+5. Tambahkan semua 12 environment variables di atas
 6. Tambahkan **PostgreSQL** sebagai add-on (otomatis mengisi `DATABASE_URL`)
 7. Klik **Deploy**
 8. Setelah deploy selesai, jalankan migrasi database dari Console:
@@ -135,15 +180,28 @@ GOOGLE_CLIENT_SECRET=
 
 ---
 
-## Catatan Penting
+## Setelah Deploy: Update Auth0 Callback URLs
 
-### Autentikasi
-Seperti disebutkan di awal, Replit Auth tidak bisa dipakai di luar Replit. Untuk deploy production, kamu perlu mengganti modul `server/replit_integrations/auth/` dengan provider OIDC lain. Panduan lengkap ada di [`MIGRATION_GUIDE.md`](../MIGRATION_GUIDE.md) bagian 9.
+Setelah dapat URL production dari DigitalOcean (contoh: `https://currotter-abc12.ondigitalocean.app`):
+
+1. Buka Auth0 dashboard → Application kamu
+2. Update **Allowed Callback URLs**:
+   ```
+   https://currotter-abc12.ondigitalocean.app/api/callback
+   ```
+3. Update **Allowed Logout URLs**:
+   ```
+   https://currotter-abc12.ondigitalocean.app
+   ```
+
+---
+
+## Catatan Tambahan
 
 ### Curation Session (In-Memory)
-Data sesi kurasi saat ini disimpan di memori server. Artinya, data hilang kalau server di-restart. Untuk production yang stabil, pertimbangkan untuk memindahkan ke tabel PostgreSQL (skema sudah tersedia di `MIGRATION_GUIDE.md` bagian 5).
+Data sesi kurasi disimpan di memori server — hilang kalau server di-restart. Untuk production yang stabil, pertimbangkan memindahkan ke PostgreSQL (skema tersedia di `MIGRATION_GUIDE.md` bagian 5).
 
-### DO Spaces — Pembersihan File
+### DO Spaces — Pembersihan File Otomatis
 Foto yang diupload ke Spaces tidak dihapus otomatis setelah kurasi selesai. Aktifkan **Lifecycle Policy** di bucket untuk menghapus file lama secara otomatis (misalnya setelah 7 hari).
 
 ---
