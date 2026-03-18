@@ -118,6 +118,8 @@ The app will be available at `http://localhost:5000`.
 
 ### Environment Variables
 
+Copy `.env.template` ke `.env` dan isi nilainya.
+
 | Variable | Description |
 |---|---|
 | `DO_SPACES_KEY` | DigitalOcean Spaces access key ID |
@@ -125,8 +127,10 @@ The app will be available at `http://localhost:5000`.
 | `DO_SPACES_ENDPOINT` | Spaces endpoint (e.g. `nyc3.digitaloceanspaces.com`) |
 | `DO_SPACES_BUCKET` | Spaces bucket name |
 | `GRADIENT_API_KEY` | DigitalOcean Gradient AI API key |
-| `SESSION_SECRET` | Secret key for session management |
+| `SESSION_SECRET` | Random secret (min 32 chars) for session encryption |
 | `DATABASE_URL` | PostgreSQL connection string (auto-provisioned on Replit) |
+| `GOOGLE_CLIENT_ID` | Google OAuth Client ID — for per-user Google Drive export |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth Client Secret — for per-user Google Drive export |
 
 ### Build for Production
 

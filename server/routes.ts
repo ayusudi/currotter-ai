@@ -11,8 +11,18 @@ import { analyzeImages, generateVisualEmbedding } from "./agents/analysis";
 import { makeDecisions } from "./agents/decision";
 import { log } from "./index";
 import { isAuthenticated } from "./replit_integrations/auth";
-import { uploadToDrive } from "./gdrive";
+import { getGoogleAuthUrl, exchangeCodeForTokens, uploadToDrive } from "./gdrive";
 import type { ImageAnalysis } from "@shared/schema";
+
+declare module "express-session" {
+  interface SessionData {
+    googleTokens?: {
+      access_token?: string | null;
+      refresh_token?: string | null;
+      expiry_date?: number | null;
+    };
+  }
+}
 
 const MAX_UPLOAD_FILES = 250;
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per file
@@ -445,6 +455,45 @@ export async function registerRoutes(
    *             schema:
    *               $ref: '#/components/schemas/Error'
    */
+  // Google Drive OAuth — redirect user to Google consent screen
+  app.get("/api/google/auth", isAuthenticated, (req: Request, res: Response) => {
+    try {
+      const sessionId = (req.query["sessionId"] as string) || "";
+      const callbackUrl = `https://${req.hostname}/api/google/callback`;
+      const authUrl = getGoogleAuthUrl(callbackUrl, sessionId);
+      res.redirect(authUrl);
+    } catch (err: any) {
+      log(`Google auth error: ${err.message}`, "routes");
+      res.redirect("/?googleAuthError=true");
+    }
+  });
+
+  // Google Drive OAuth — handle callback, store tokens in session
+  app.get("/api/google/callback", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const code = req.query["code"] as string;
+      const sessionId = req.query["state"] as string;
+      if (!code) {
+        return res.redirect("/?googleAuthError=true");
+      }
+      const callbackUrl = `https://${req.hostname}/api/google/callback`;
+      const tokens = await exchangeCodeForTokens(code, callbackUrl);
+      (req.session as any).googleTokens = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expiry_date: tokens.expiry_date,
+      };
+      await new Promise<void>((resolve, reject) =>
+        req.session.save((err) => (err ? reject(err) : resolve()))
+      );
+      log(`Google Drive authorized for session ${sessionId}`, "routes");
+      res.redirect(`/?restoreSession=${encodeURIComponent(sessionId)}&googleAuth=success`);
+    } catch (err: any) {
+      log(`Google callback error: ${err.message}`, "routes");
+      res.redirect("/?googleAuthError=true");
+    }
+  });
+
   app.post("/api/sessions/:id/export-drive", isAuthenticated, async (req: Request, res: Response) => {
     try {
       const sessionId = req.params["id"] as string;
@@ -454,6 +503,14 @@ export async function registerRoutes(
       }
       if (session.status !== "completed") {
         return res.status(400).json({ message: "Session not yet completed" });
+      }
+
+      // Check if user has authorized Google Drive
+      const googleTokens = (req.session as any).googleTokens;
+      if (!googleTokens?.access_token) {
+        const callbackUrl = `https://${req.hostname}/api/google/callback`;
+        const authUrl = getGoogleAuthUrl(callbackUrl, sessionId);
+        return res.status(401).json({ needsGoogleAuth: true, authUrl });
       }
 
       log(`Starting Google Drive export for session ${sessionId}`, "routes");
@@ -486,7 +543,7 @@ export async function registerRoutes(
       }
 
       const folderName = `Currotter - Curated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-      const result = await uploadToDrive(driveFiles, folderName);
+      const result = await uploadToDrive(googleTokens, driveFiles, folderName);
 
       log(`Drive export complete: ${result.fileCount} files to ${result.folderUrl}`, "routes");
 

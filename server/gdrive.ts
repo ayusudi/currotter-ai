@@ -1,27 +1,42 @@
 import { google } from 'googleapis';
 
-function getGoogleDriveClient() {
+const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+
+function createOAuth2Client(callbackUrl?: string) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-
-  if (!clientId || !clientSecret || !refreshToken) {
+  if (!clientId || !clientSecret) {
     throw new Error(
-      'Missing Google Drive configuration: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN are required'
+      'Missing Google OAuth configuration: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required'
     );
   }
+  return new google.auth.OAuth2(clientId, clientSecret, callbackUrl);
+}
 
-  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
+export function getGoogleAuthUrl(callbackUrl: string, state: string): string {
+  const oauth2Client = createOAuth2Client(callbackUrl);
+  return oauth2Client.generateAuthUrl({
+    access_type: 'online',
+    scope: SCOPES,
+    state,
+  });
+}
 
-  return google.drive({ version: 'v3', auth: oauth2Client });
+export async function exchangeCodeForTokens(code: string, callbackUrl: string) {
+  const oauth2Client = createOAuth2Client(callbackUrl);
+  const { tokens } = await oauth2Client.getToken(code);
+  return tokens;
 }
 
 export async function uploadToDrive(
+  tokens: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null },
   files: Array<{ filename: string; buffer: Buffer; mimeType: string }>,
   folderName: string
 ): Promise<{ folderId: string; folderUrl: string; fileCount: number }> {
-  const drive = getGoogleDriveClient();
+  const oauth2Client = createOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+
+  const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
   const folder = await drive.files.create({
     requestBody: {

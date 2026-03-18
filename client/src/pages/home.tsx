@@ -68,6 +68,42 @@ export default function Home() {
     }
   }, [wsProgress, appState, sessionId]);
 
+  // Handle redirect back from Google OAuth — restore session and prompt user to export
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const restoreSessionId = params.get("restoreSession");
+    const googleAuth = params.get("googleAuth");
+    const googleAuthError = params.get("googleAuthError");
+
+    if (googleAuthError) {
+      window.history.replaceState({}, "", "/");
+      toast({
+        title: "Google Drive authorization failed",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (restoreSessionId && googleAuth === "success") {
+      window.history.replaceState({}, "", "/");
+      fetch(`/api/sessions/${restoreSessionId}`, { credentials: "include" })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.curatedImages?.length > 0) {
+            setSessionId(restoreSessionId);
+            setCuratedImages(data.curatedImages);
+            setAppState("results");
+            toast({
+              title: "Google Drive connected",
+              description: "Click \"Export to Drive\" to complete the export.",
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   async function fetchResults(sid: string) {
     try {
       const res = await fetch(`/api/sessions/${sid}`);
@@ -156,7 +192,7 @@ export default function Home() {
   const handleFilesSelected = useCallback((files: File[]) => {
     setSelectedFiles((prev) => {
       const combined = [...prev, ...files];
-      return combined.slice(0, 50);
+      return combined.slice(0, 250);
     });
   }, []);
 
@@ -262,11 +298,19 @@ export default function Home() {
         method: "POST",
         credentials: "include",
       });
+
+      const data = await res.json();
+
+      // User needs to authorize Google Drive first
+      if (res.status === 401 && data.needsGoogleAuth) {
+        window.location.href = data.authUrl;
+        return;
+      }
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.message || "Export failed");
       }
-      const data = await res.json();
+
       setDriveExportUrl(data.folderUrl);
       toast({
         title: "Exported to Google Drive",
