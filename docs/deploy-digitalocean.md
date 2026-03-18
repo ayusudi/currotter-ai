@@ -1,24 +1,77 @@
 # Panduan Deploy Currotter ke DigitalOcean
 
-## Pertanyaan Utama: Apakah Replit Bisa Deploy ke DigitalOcean?
+---
 
-**Tidak secara langsung.** Replit memiliki sistem deployment sendiri (tombol "Deploy / Publish") yang men-host aplikasimu di infrastruktur Replit — bukan di DigitalOcean.
+## Jawaban Langsung: "Tetap Pakai Kode Replit, Deploy ke DigitalOcean"
 
-Untuk pindah ke DigitalOcean, kamu perlu melakukan proses berikut:
+Sayangnya **tidak bisa** dilakukan tanpa mengubah kode, karena dua fitur di aplikasi ini bergantung pada **infrastruktur internal Replit** yang hanya bisa diakses dari dalam jaringan Replit:
 
-1. **Export kode** dari Replit ke GitHub (via Git)
-2. **Deploy dari GitHub** ke salah satu layanan DigitalOcean:
-   - **App Platform** (paling mudah, mirip Heroku)
-   - **Droplet** (VPS manual, perlu setup Node.js + Nginx sendiri)
-3. **Ganti dua komponen yang Replit-specific** (Auth + Google Drive — lihat bagian bawah)
+| Fitur | Masalah di Luar Replit |
+|---|---|
+| **Login / Auth** | Menggunakan Replit OIDC — server `https://replit.com/oidc` hanya menerima permintaan dari Repl yang terdaftar |
+| **Export ke Google Drive** | Menggunakan Replit Connectors — memanggil endpoint internal `REPLIT_CONNECTORS_HOSTNAME` yang tidak bisa diakses dari server lain |
+
+Kalau kamu deploy ke DigitalOcean dengan kode yang sama persis sekarang, aplikasi akan error saat user mencoba login atau export ke Drive.
+
+---
+
+## Solusi Terbaik Tanpa Ganti Kode: Replit Deploy (Sangat Direkomendasikan)
+
+> Ini mungkin yang sebenarnya kamu cari.
+
+Replit punya fitur **Deploy / Publish** yang men-host aplikasimu ke cloud production Replit — bukan lingkungan development. Hasilnya:
+
+- ✅ **Tidak perlu ubah satu baris kode pun**
+- ✅ Login Replit Auth tetap berjalan normal
+- ✅ Google Drive export tetap berjalan normal
+- ✅ DigitalOcean Spaces + Gradient AI tetap berjalan (mereka memang sudah di DO)
+- ✅ Dapat domain `nama-app.replit.app` atau bisa pakai domain sendiri
+- ✅ Selalu online (tidak mati saat tidak dipakai, berbeda dengan development Repl)
+- ✅ Bisa pakai environment variables / secrets yang sudah ada
+
+**Cara deploy:** Klik tombol **"Deploy"** / **"Publish"** di bagian atas Replit, pilih tipe deployment.
+
+**Harga:** mulai ~$7/bulan (Reserved VM), atau pakai Autoscale untuk traffic yang tidak terprediksi.
+
+### Perhatikan ini:
+Secara teknis, *infrastruktur utama* Currotter sudah jalan di DigitalOcean:
+- Foto disimpan di **DigitalOcean Spaces**
+- AI scoring pakai **DigitalOcean Gradient AI**
+- Hanya server aplikasinya yang di Replit
+
+Jadi dengan Replit Deploy, arsitekturmu sudah "sebagian besar di DigitalOcean" tanpa effort apapun.
+
+---
+
+## Jika Tetap Ingin Pindah ke DigitalOcean Sepenuhnya
+
+Kamu perlu mengubah dua bagian kode. Ini detail lengkapnya:
+
+### Perubahan yang Diperlukan
+
+#### 1. Ganti Sistem Login (Auth)
+
+File: `server/replit_integrations/auth/replitAuth.ts`
+
+Saat ini menggunakan Replit OIDC yang terikat ke `REPL_ID`. Di luar Replit, server `https://replit.com/oidc` tidak akan menerima request dari server kamu.
+
+**Pilihan pengganti (pilih satu):**
+- **Auth0** — paling mudah, free tier tersedia, dokumentasi bagus
+- **Clerk** — UI login siap pakai, cocok untuk SaaS
+- **Google OAuth langsung** — kalau user base kamu sudah pakai Google semua
+- **Username + password sendiri** — paling banyak koding tapi paling bebas
+
+#### 2. Ganti Google Drive Export
+
+File: `server/gdrive.ts`
+
+Saat ini memanggil endpoint internal Replit untuk mendapatkan token OAuth Google. Perlu diganti dengan OAuth Google standar.
 
 ---
 
 ## Daftar Environment Variables
 
-### Kelompok 1 — Langsung Bisa Dipindahkan (Tidak Perlu Perubahan Kode)
-
-Variabel-variabel ini sudah ada di Replit Secrets dan cukup di-copy ke environment baru.
+### Yang Langsung Bisa Dipindahkan (Kode Tidak Perlu Diubah)
 
 | Nama Variable | Contoh Nilai | Keterangan |
 |---|---|---|
@@ -26,122 +79,45 @@ Variabel-variabel ini sudah ada di Replit Secrets dan cukup di-copy ke environme
 | `DO_SPACES_SECRET` | `wJalrXUtnFEMI/K7MDENG/...` | Secret Access Key dari DigitalOcean Spaces |
 | `DO_SPACES_ENDPOINT` | `sgp1.digitaloceanspaces.com` | Endpoint region Spaces kamu (tanpa `https://`) |
 | `DO_SPACES_BUCKET` | `currotter-photos` | Nama bucket di DigitalOcean Spaces |
-| `GRADIENT_API_KEY` | `sk-...` | API Key dari DigitalOcean Gradient AI (GPT-4.1-mini) |
-| `SESSION_SECRET` | `string-acak-panjang-min-32-karakter` | Kunci enkripsi session — buat baru yang kuat |
-| `DATABASE_URL` | `postgresql://user:pass@host:5432/db` | Connection string PostgreSQL (ganti dengan DO Managed DB) |
+| `GRADIENT_API_KEY` | `sk-...` | API Key dari DigitalOcean Gradient AI |
+| `SESSION_SECRET` | `string-acak-panjang-min-32-karakter` | Enkripsi session — generate ulang yang baru |
+| `DATABASE_URL` | `postgresql://user:pass@host:5432/db` | Ganti dengan DO Managed PostgreSQL |
 
-> **Catatan `SESSION_SECRET`:** Gunakan string acak yang panjang dan tidak mudah ditebak. Contoh cara generate di terminal: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+> **Generate `SESSION_SECRET` baru:**
+> ```
+> node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+> ```
 
-> **Catatan `DATABASE_URL`:** Di Replit, ini otomatis di-provision. Di DigitalOcean, kamu perlu membuat **Managed PostgreSQL** cluster sendiri, lalu ambil connection string dari panel kontrolnya.
+### Yang Replit-Specific (Perlu Diganti Bersama Kode)
 
----
-
-### Kelompok 2 — Replit-Specific (Perlu Diganti / Dihapus)
-
-Variabel-variabel ini hanya ada di lingkungan Replit dan **tidak akan berfungsi** di luar Replit. Kamu perlu mengganti fitur yang menggunakannya.
-
-#### 2a. Replit Auth (Login/Autentikasi)
-
-Kode di `server/replit_integrations/auth/replitAuth.ts` menggunakan:
-
-| Nama Variable | Keterangan |
-|---|---|
-| `REPL_ID` | ID Repl kamu — digunakan sebagai OIDC Client ID ke `https://replit.com/oidc` |
-| `ISSUER_URL` | Default: `https://replit.com/oidc` — server OIDC Replit |
-
-**Di luar Replit, sistem login ini tidak bisa dipakai.** Kamu perlu mengganti auth dengan salah satu opsi:
-
-- **Auth0** — paling mudah, free tier tersedia, OIDC-compatible
-- **Google OAuth** — bisa pakai Google Sign-In langsung
-- **Clerk** — modern, mudah diintegrasikan
-- **Bikin sendiri** — username + password dengan bcrypt + session
-
-#### 2b. Google Drive Export
-
-Kode di `server/gdrive.ts` menggunakan sistem Replit Connectors:
-
-| Nama Variable | Keterangan |
-|---|---|
-| `REPLIT_CONNECTORS_HOSTNAME` | Host internal Replit untuk mengambil OAuth token Google Drive |
-| `REPL_IDENTITY` | Token identitas Repl (untuk Repl environment) |
-| `WEB_REPL_RENEWAL` | Token renewal untuk Replit Deployment environment |
-
-**Di luar Replit, Google Drive connector ini tidak akan berfungsi.** Kamu perlu mengganti dengan OAuth Google standar menggunakan variabel berikut yang kamu buat sendiri di [Google Cloud Console](https://console.cloud.google.com):
-
-| Nama Variable Baru | Keterangan |
-|---|---|
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID dari Google Cloud Console |
-| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret dari Google Cloud Console |
-| `GOOGLE_REDIRECT_URI` | Callback URL OAuth, contoh: `https://app.kamu.com/api/auth/google/callback` |
-
-> Perlu modifikasi kode di `server/gdrive.ts` untuk menggunakan credentials ini langsung, bukan lewat sistem Replit Connectors.
+| Nama Variable | Digunakan Untuk | Pengganti |
+|---|---|---|
+| `REPL_ID` | OIDC Client ID untuk Replit Auth | Credentials dari provider auth baru (Auth0, dll) |
+| `ISSUER_URL` | Server OIDC Replit | URL issuer dari provider auth baru |
+| `REPLIT_CONNECTORS_HOSTNAME` | Endpoint internal Replit Connectors | Dihapus, ganti dengan `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` |
+| `REPL_IDENTITY` | Token identitas Repl | Dihapus |
+| `WEB_REPL_RENEWAL` | Token renewal untuk Replit Deployment | Dihapus |
 
 ---
 
-## Ringkasan: Yang Bisa Langsung Dipindah vs Yang Perlu Diubah
+## Perbandingan Opsi
 
-```
-✅ BISA LANGSUNG DIPINDAH (copy-paste nilai dari Replit Secrets):
-   DO_SPACES_KEY
-   DO_SPACES_SECRET
-   DO_SPACES_ENDPOINT
-   DO_SPACES_BUCKET
-   GRADIENT_API_KEY
-   SESSION_SECRET
-
-✅ PERLU DIBUAT BARU (nilai berbeda, kode tidak perlu diubah):
-   DATABASE_URL        → buat DO Managed PostgreSQL, ambil connection string baru
-
-⚠️  PERLU GANTI KODE + VARIABEL BARU:
-   REPL_ID             → hapus, ganti sistem auth (Auth0, Google OAuth, dll)
-   ISSUER_URL          → hapus, ikuti dokumentasi provider auth baru
-   REPLIT_CONNECTORS_HOSTNAME  → hapus, ganti dengan Google OAuth standar
-   REPL_IDENTITY       → hapus
-   WEB_REPL_RENEWAL    → hapus
-```
+| | Replit Deploy | Pindah ke DigitalOcean |
+|---|---|---|
+| **Ubah kode** | ❌ Tidak perlu | ✅ Perlu (Auth + Google Drive) |
+| **Semua fitur jalan** | ✅ Ya | ✅ Ya (setelah diubah) |
+| **Harga mulai** | ~$7/bulan | ~$12/bulan + $15 (PostgreSQL) |
+| **Effort** | Klik tombol | Beberapa hari kerja |
+| **Domain kustom** | ✅ Bisa | ✅ Bisa |
+| **Kontrol penuh infrastruktur** | ❌ Terbatas | ✅ Penuh |
 
 ---
 
-## Opsi Hosting di DigitalOcean
+## Kesimpulan
 
-### Opsi A — App Platform (Direkomendasikan untuk Mulai)
+Untuk **rilis produksi secepat mungkin tanpa ganti kode** → gunakan **Replit Deploy**.
 
-Paling mudah dan mirip pengalaman di Replit:
-
-1. Push kode ke GitHub
-2. Buka [DigitalOcean App Platform](https://cloud.digitalocean.com/apps)
-3. Klik "Create App" → pilih repository GitHub kamu
-4. Set **Build Command:** `npm run build`
-5. Set **Run Command:** `npm start` (atau `node dist/server/index.js`)
-6. Tambahkan semua environment variables dari daftar di atas
-7. Tambahkan **PostgreSQL** sebagai add-on (otomatis set `DATABASE_URL`)
-8. Deploy
-
-**Harga perkiraan:** mulai ~$12/bulan (Basic instance) + $15/bulan untuk PostgreSQL
-
-### Opsi B — Droplet (VPS Manual)
-
-Untuk kontrol penuh:
-
-1. Buat Droplet Ubuntu minimal 2GB RAM
-2. Install Node.js 20+, PostgreSQL (atau pakai Managed DB terpisah)
-3. Clone repo dari GitHub
-4. Setup environment variables di file `.env`
-5. Jalankan dengan `pm2` agar tetap hidup setelah reboot
-6. Setup Nginx sebagai reverse proxy ke port 5000
-7. Pasang SSL dengan Certbot (Let's Encrypt gratis)
-
----
-
-## Urutan Kerja yang Disarankan
-
-1. **Push kode ke GitHub** (jika belum)
-2. **Buat Google Cloud project** → setup OAuth credentials untuk Google Drive
-3. **Pilih provider auth** (Auth0 paling cepat) → daftar, dapatkan credentials
-4. **Modifikasi kode** `replitAuth.ts` dan `gdrive.ts` untuk tidak bergantung pada Replit
-5. **Test lokal** dengan `.env` file yang berisi semua variabel baru
-6. **Deploy ke App Platform** atau Droplet
-7. **Jalankan database migration** (`npm run db:push`)
+Untuk **kontrol penuh + bebas dari Replit jangka panjang** → migrasi ke DigitalOcean App Platform dengan mengganti Auth dan Google Drive integration.
 
 ---
 
