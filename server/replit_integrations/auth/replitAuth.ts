@@ -8,8 +8,29 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 
+// Detect which auth provider to use.
+// Auth0 takes priority when AUTH0_DOMAIN is set; otherwise fall back to Replit OIDC.
+const useAuth0 = !!process.env.AUTH0_DOMAIN;
+
 const getOidcConfig = memoize(
   async () => {
+    if (useAuth0) {
+      const domain = process.env.AUTH0_DOMAIN!;
+      const clientId = process.env.AUTH0_CLIENT_ID;
+      const clientSecret = process.env.AUTH0_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
+        throw new Error(
+          "Missing Auth0 configuration: AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET are required when AUTH0_DOMAIN is set"
+        );
+      }
+      return await client.discovery(
+        new URL(`https://${domain}/`),
+        clientId,
+        { client_secret: clientSecret }
+      );
+    }
+
+    // Replit OIDC fallback (for development inside Replit)
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
       process.env.REPL_ID!
@@ -19,7 +40,7 @@ const getOidcConfig = memoize(
 );
 
 export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -51,13 +72,25 @@ function updateUserSession(
 }
 
 async function upsertUser(claims: any) {
-  await authStorage.upsertUser({
-    id: claims["sub"],
-    email: claims["email"],
-    firstName: claims["first_name"],
-    lastName: claims["last_name"],
-    profileImageUrl: claims["profile_image_url"],
-  });
+  if (useAuth0) {
+    // Auth0 uses standard OIDC claims
+    await authStorage.upsertUser({
+      id: claims["sub"],
+      email: claims["email"],
+      firstName: claims["given_name"] ?? claims["nickname"] ?? null,
+      lastName: claims["family_name"] ?? null,
+      profileImageUrl: claims["picture"] ?? null,
+    });
+  } else {
+    // Replit OIDC uses custom claim names
+    await authStorage.upsertUser({
+      id: claims["sub"],
+      email: claims["email"],
+      firstName: claims["first_name"],
+      lastName: claims["last_name"],
+      profileImageUrl: claims["profile_image_url"],
+    });
+  }
 }
 
 export async function setupAuth(app: Express) {
@@ -78,41 +111,43 @@ export async function setupAuth(app: Express) {
     verified(null, user);
   };
 
-  // Keep track of registered strategies
   const registeredStrategies = new Set<string>();
 
-  // Helper function to ensure strategy exists for a domain
-  const ensureStrategy = (domain: string) => {
-    const strategyName = `replitauth:${domain}`;
+  const ensureStrategy = (callbackURL: string) => {
+    const prefix = useAuth0 ? "auth0" : "replitauth";
+    const strategyName = `${prefix}:${callbackURL}`;
     if (!registeredStrategies.has(strategyName)) {
       const strategy = new Strategy(
         {
           name: strategyName,
           config,
           scope: "openid email profile offline_access",
-          callbackURL: `https://${domain}/api/callback`,
+          callbackURL,
         },
         verify
       );
       passport.use(strategy);
       registeredStrategies.add(strategyName);
     }
+    return strategyName;
   };
 
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   app.get("/api/login", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
+    const callbackURL = `https://${req.hostname}/api/callback`;
+    const strategyName = ensureStrategy(callbackURL);
+    passport.authenticate(strategyName, {
       prompt: "login consent",
       scope: ["openid", "email", "profile", "offline_access"],
     })(req, res, next);
   });
 
   app.get("/api/callback", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
+    const callbackURL = `https://${req.hostname}/api/callback`;
+    const strategyName = ensureStrategy(callbackURL);
+    passport.authenticate(strategyName, {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
     })(req, res, next);
@@ -120,12 +155,19 @@ export async function setupAuth(app: Express) {
 
   app.get("/api/logout", (req, res) => {
     req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+      const returnTo = `${req.protocol}://${req.hostname}`;
+      try {
+        const clientId = useAuth0
+          ? process.env.AUTH0_CLIENT_ID!
+          : process.env.REPL_ID!;
+        const logoutUrl = client.buildEndSessionUrl(config, {
+          client_id: clientId,
+          post_logout_redirect_uri: returnTo,
+        }).href;
+        res.redirect(logoutUrl);
+      } catch {
+        res.redirect(returnTo);
+      }
     });
   });
 }

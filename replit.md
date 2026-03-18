@@ -163,12 +163,30 @@ flowchart LR
 - `SESSION_SECRET` — Express session encryption key
 - `DATABASE_URL` — PostgreSQL connection string (auto-provisioned on Replit)
 
+### Optional — Auth0 (for non-Replit deployment)
+When `AUTH0_DOMAIN` is set, the app switches from Replit OIDC to Auth0:
+- `AUTH0_DOMAIN` — Auth0 tenant domain, e.g. `dev-xxx.us.auth0.com`
+- `AUTH0_CLIENT_ID` — Auth0 Application Client ID
+- `AUTH0_CLIENT_SECRET` — Auth0 Application Client Secret
+
+### Optional — Google Drive (for non-Replit deployment)
+When set, replaces the Replit Connector-based Google Drive integration:
+- `GOOGLE_CLIENT_ID` — Google OAuth 2.0 Client ID
+- `GOOGLE_CLIENT_SECRET` — Google OAuth 2.0 Client Secret
+- `GOOGLE_REFRESH_TOKEN` — Pre-authorized refresh token for the export Google account
+
 ## Running
 - `npm run dev` starts both Express backend and Vite frontend on port 5000
 
 ---
 
 ## Recent Changes
+
+### 2026-03-18 — Dual-mode Auth + Google Drive for DigitalOcean portability
+- `server/replit_integrations/auth/replitAuth.ts` now auto-detects auth provider: uses **Auth0** when `AUTH0_DOMAIN` is set, falls back to Replit OIDC otherwise — no breakage during development
+- Auth0 path: `client.discovery` with `{ client_secret }` + standard OIDC claims (`given_name`, `family_name`, `picture`)
+- `server/gdrive.ts` completely rewritten: replaced Replit Connectors with direct Google OAuth2 using `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `GOOGLE_REFRESH_TOKEN` env vars (uses `googleapis` OAuth2Client directly)
+- Deploy guide at `docs/deploy-digitalocean.md` updated with step-by-step Auth0 + Google Drive OAuth setup instructions
 
 ### 2026-03-13 — 250-photo support with smart AI budget
 - Upload limit raised to 250 files (was 50); per-file cap lowered to 10 MB (was 20 MB)

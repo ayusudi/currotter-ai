@@ -5,4 +5,4 @@ generated = []
 id = "07yEgngxubsj9mwmlInzH"
 uri = "file://docs/deploy-digitalocean.md"
 type = "text"
-title = "Panduan Deploy Currotter — Replit vs DigitalOcean"
+title = "Panduan Deploy ke DigitalOcean — Auth0 + Google Drive"

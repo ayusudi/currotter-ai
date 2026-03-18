@@ -1,49 +1,18 @@
-// Google Drive integration (via Replit connector)
 import { google } from 'googleapis';
 
-let connectionSettings: any;
+function getGoogleDriveClient() {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-async function getAccessToken() {
-  if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
-    return connectionSettings.settings.access_token;
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      'Missing Google Drive configuration: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN are required'
+    );
   }
 
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY
-    ? 'repl ' + process.env.REPL_IDENTITY
-    : process.env.WEB_REPL_RENEWAL
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
-  }
-
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=google-drive',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
-
-  if (!connectionSettings || !accessToken) {
-    throw new Error('Google Drive not connected');
-  }
-  return accessToken;
-}
-
-async function getUncachableGoogleDriveClient() {
-  const accessToken = await getAccessToken();
-
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({
-    access_token: accessToken
-  });
+  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
 
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
@@ -52,14 +21,13 @@ export async function uploadToDrive(
   files: Array<{ filename: string; buffer: Buffer; mimeType: string }>,
   folderName: string
 ): Promise<{ folderId: string; folderUrl: string; fileCount: number }> {
-  const drive = await getUncachableGoogleDriveClient();
+  const drive = getGoogleDriveClient();
 
-  const folderMetadata = {
-    name: folderName,
-    mimeType: 'application/vnd.google-apps.folder',
-  };
   const folder = await drive.files.create({
-    requestBody: folderMetadata,
+    requestBody: {
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder',
+    },
     fields: 'id, webViewLink',
   });
 
