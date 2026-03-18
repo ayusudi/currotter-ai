@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "07yEgngxubsj9mwmlInzH"
+uri = "file://docs/deploy-digitalocean.md"
+type = "text"
+title = "Panduan Deploy Currotter ke DigitalOcean"
