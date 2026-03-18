@@ -1,6 +1,89 @@
+<div align="center">
+
+<img src="client/public/images/otter-hero.png" alt="Currotter Hero" width="280" />
+
 # Currotter — AI Photo Curator
 
-Currotter is an AI-powered photo curation web application that automatically removes duplicates, blurry shots, and low-quality images from your event photo collections. Upload up to 250 photos and get back only the best ones, ranked by a three-agent AI pipeline with quality tiers.
+**Drop your event photos. Let the otter pick the best ones.**
+
+Currotter is an AI-powered photo curation app that automatically removes duplicates, blurry shots, and low-quality images from your event photo collections. Upload up to 250 photos and get back only the best ones — ranked by a three-agent AI pipeline and organized into quality tiers.
+
+[![Built with React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev)
+[![Express 5](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)](https://expressjs.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![DigitalOcean](https://img.shields.io/badge/DigitalOcean-Deployed-0080FF?logo=digitalocean&logoColor=white)](https://www.digitalocean.com)
+
+</div>
+
+---
+
+## What is Currotter?
+
+<img src="client/public/images/otter-welcome.png" alt="Welcome" width="180" align="right" />
+
+Event photographers and hobbyists know the pain: you come back from a birthday party, conference, or trip with **hundreds of photos** — many of them duplicates, blurry, or poorly lit. Manually sorting through them takes hours.
+
+Currotter solves this. You upload your photos, choose a curation mode, and the AI pipeline does the rest in minutes. It returns a clean, curated album where every photo earns its place — complete with quality badges and human-readable explanations for why each shot was kept.
+
+### Key Highlights
+
+- **Up to 250 photos** per session with drag-and-drop upload
+- **Two curation modes** — *Social* (more variety) and *Minimal* (only the absolute best)
+- **Three-agent AI pipeline** — filtering, analysis, and decision-making
+- **Smart AI budget** — only top-ranked photos hit the vision API; the rest are scored locally at zero cost
+- **Quality tiers** — Hero, Great, and Good badges on every curated photo
+- **Real-time progress** via WebSocket
+- **Export** — ZIP download or one-click Google Drive export
+- **Dark / Light theme** with persistent preference
+
+---
+
+## How It Works
+
+The curation pipeline runs in three stages, each handled by a specialized AI agent:
+
+<div align="center">
+<img src="client/public/images/otter-upload.png" alt="Upload" width="160" />
+&nbsp;&nbsp;&nbsp;&nbsp;
+<img src="client/public/images/otter-processing.png" alt="Processing" width="160" />
+&nbsp;&nbsp;&nbsp;&nbsp;
+<img src="client/public/images/otter-success.png" alt="Success" width="160" />
+</div>
+
+<br />
+
+### Stage 1 — Filtering Agent
+
+Removes the obvious throwaways before anything touches the AI API:
+
+- **Duplicate detection** — Perceptual hashing with Hamming distance (≤30 bits = duplicate)
+- **Blur detection** — Laplacian variance analysis (threshold 100)
+- **Brightness check** — Flags photos that are too dark (< 0.08) or overexposed (> 0.95)
+- **Local score** — Pre-ranks every surviving photo by blur (60%) + brightness (40%)
+
+### Stage 2 — Analysis Agent
+
+Applies a smart AI budget to keep costs under control:
+
+| Mode | Photos sent to AI | Remaining photos |
+|------|-------------------|------------------|
+| **Social** | Top 100 by local score | Scored synthetically |
+| **Minimal** | Top 60 by local score | Scored synthetically |
+
+- **AI path** — GPT-4.1-mini vision (via DigitalOcean Gradient AI) returns an aesthetic score (0–1), scene description, and a 76-dimensional embedding
+- **Synthetic path** — Local metrics are converted to an aesthetic proxy with a real color histogram embedding — so clustering still works, with zero extra API cost
+
+### Stage 3 — Decision Agent
+
+Groups and selects the final curated set:
+
+- **Cosine similarity clustering** on embeddings (threshold: Social 0.90, Minimal 0.80)
+- **Weighted scoring** — focus, aesthetics, uniqueness, brightness
+- **Best-per-cluster selection** — Social picks up to 2 per cluster, Minimal picks 1
+- **Quality tier assignment**:
+  - **Hero** — top 15% by final score
+  - **Great** — next 35%
+  - **Good** — remainder
 
 ---
 
@@ -94,126 +177,20 @@ flowchart LR
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js 20+
-- PostgreSQL 14+
-- [DigitalOcean Spaces](https://www.digitalocean.com/products/spaces) bucket for temporary image storage
-- [DigitalOcean Gradient AI](https://www.digitalocean.com/products/ai) API key for vision-based scoring
-
-### Installation
-
-```bash
-git clone <repository-url>
-cd currotter
-npm install
-cp .env.template .env   # fill in your credentials
-npm run db:push
-npm run dev
-```
-
-The app will be available at `http://localhost:5000`.
-
-### Environment Variables
-
-Copy `.env.template` ke `.env` dan isi nilainya.
-
-| Variable | Description |
-|---|---|
-| `DO_SPACES_KEY` | DigitalOcean Spaces access key ID |
-| `DO_SPACES_SECRET` | DigitalOcean Spaces secret access key |
-| `DO_SPACES_ENDPOINT` | Spaces endpoint (e.g. `nyc3.digitaloceanspaces.com`) |
-| `DO_SPACES_BUCKET` | Spaces bucket name |
-| `GRADIENT_API_KEY` | DigitalOcean Gradient AI API key |
-| `SESSION_SECRET` | Random secret (min 32 chars) for session encryption |
-| `DATABASE_URL` | PostgreSQL connection string (auto-provisioned on Replit) |
-| `GOOGLE_CLIENT_ID` | Google OAuth Client ID — for per-user Google Drive export |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth Client Secret — for per-user Google Drive export |
-
-### Build for Production
-
-```bash
-npm run build
-npm start
-```
-
----
-
-## Features
-
-### Authentication
-
-- **Replit Auth (OpenID Connect)** — Secure login via Replit's OIDC provider. All API endpoints require authentication.
-- **Session management** — PostgreSQL-backed session store with automatic token refresh.
-
-### Upload & Curation
-
-- **Drag-and-Drop Upload** — Drop up to **250 images** (10 MB each) or click to browse. A thumbnail preview grid shows all selected files with individual sizes, a total size counter, and an estimated processing time before you start.
-- **Two Curation Modes**:
-  - **Social** — More photos, variety-focused. Selects up to 2 images per visual cluster. AI analyzes the top 100 photos.
-  - **Minimal** — Only the absolute best shots. Selects 1 image per cluster. AI analyzes the top 60 photos.
-
-### AI Pipeline (Three-Agent System)
-
-1. **Filtering Agent** — Detects and removes duplicate photos using perceptual hashing with bit-level Hamming distance. Flags blurry images (Laplacian variance) and photos with extreme brightness. Computes a local quality score (blur 60% + brightness 40%) to pre-rank images before AI scoring.
-
-2. **Analysis Agent** — Applies a smart AI budget: the top-ranked photos (by local score) are sent to DigitalOcean Gradient AI (GPT-4.1-mini) for aesthetic scoring and scene description. Remaining photos receive a synthetic score derived from local metrics and a real 76-dimensional color embedding — so the clustering algorithm still works well with zero extra API cost.
-
-3. **Decision Agent** — Groups visually similar images into clusters using cosine similarity on embeddings. Selects the best-scoring images from each cluster. Assigns a **quality tier** to each selected photo:
-   - **Hero** — top 15% by final score
-   - **Great** — next 35%
-   - **Good** — remainder
-
-### Quality Tiers & Selection Reasons
-
-- Hero and Great badges appear on gallery cards and in the lightbox.
-- Photos scored without AI analysis show a "Local score" label in the lightbox.
-- Every curated photo includes a human-readable explanation of why it was selected.
-
-### Real-Time Progress
-
-- Live progress updates via WebSocket as images move through each pipeline stage.
-- Fallback HTTP polling activates automatically if WebSocket is unavailable.
-
-### Results & Export
-
-- **Curated Gallery** — Responsive grid, sorted by score with a name toggle. Keyboard navigation in lightbox (← → Esc).
-- **ZIP Download** — Download all curated photos in one click.
-- **Google Drive Export** — Save directly to Drive; button becomes an "Open in Drive" link after export.
-
-### Dark / Light Theme
-
-- Toggle between dark and light themes; preference is saved across sessions.
-
----
-
-## Pages
-
-| Route | State | Description |
-|---|---|---|
-| `/` | unauthenticated | Landing page with hero, feature cards, how-it-works |
-| `/` | authenticated | Upload → Processing → Results flow |
-| `/terms` | any | Terms & Conditions |
-| `/privacy` | any | Privacy Policy |
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, TypeScript, Vite 7, Tailwind CSS, shadcn/ui, Framer Motion |
-| Backend | Express 5, TypeScript |
-| AI | DigitalOcean Gradient AI (GPT-4.1-mini vision model) |
-| Storage | DigitalOcean Spaces (S3-compatible) |
-| Database | PostgreSQL (Drizzle ORM) |
-| Auth | Replit Auth (OpenID Connect) + Passport.js |
-| Real-Time | WebSocket (ws) |
-| Image Processing | Sharp, image-hash |
-| Export | JSZip, Google Drive API (googleapis) |
-| API Docs | Swagger (swagger-jsdoc + swagger-ui-express) |
+| **Frontend** | React 18, TypeScript, Vite 7, Tailwind CSS, shadcn/ui, Framer Motion |
+| **Backend** | Express 5, TypeScript |
+| **AI** | DigitalOcean Gradient AI (GPT-4.1-mini vision model) |
+| **Storage** | DigitalOcean Spaces (S3-compatible) |
+| **Database** | PostgreSQL (Drizzle ORM) |
+| **Auth** | Passport.js (local strategy) |
+| **Real-Time** | WebSocket (ws) |
+| **Image Processing** | Sharp, image-hash |
+| **Export** | JSZip, Google Drive API (googleapis) |
+| **API Docs** | Swagger (swagger-jsdoc + swagger-ui-express) |
 
 ---
 
@@ -248,8 +225,6 @@ server/
     filtering.ts            # Perceptual hashing, blur, brightness, local score
     analysis.ts             # Gradient AI vision API + synthetic scoring + embeddings
     decision.ts             # Cosine clustering, weighted scoring, quality tiers
-  replit_integrations/
-    auth/                   # Replit Auth (OIDC) module
 shared/
   schema.ts                 # Zod schemas (ImageAnalysis + qualityTier + aiAnalyzed)
   models/
@@ -258,14 +233,25 @@ shared/
 
 ---
 
+## Pages
+
+| Route | State | Description |
+|---|---|---|
+| `/` | unauthenticated | Landing page with hero, feature cards, how-it-works |
+| `/` | authenticated | Upload → Processing → Results flow |
+| `/terms` | any | Terms & Conditions |
+| `/privacy` | any | Privacy Policy |
+
+---
+
 ## API Endpoints
 
-All endpoints (except auth routes) require authentication. Interactive docs at `/api-docs`.
+All endpoints (except auth routes) require authentication. Interactive docs available at `/api-docs`.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/login` | Initiates the OIDC login flow |
-| `GET` | `/api/callback` | OIDC callback handler |
+| `GET` | `/api/login` | Initiates the login flow |
+| `GET` | `/api/callback` | Auth callback handler |
 | `GET` | `/api/logout` | Logs out and ends the session |
 | `GET` | `/api/auth/user` | Returns the current authenticated user |
 | `POST` | `/api/curate` | Upload images (up to 250) and start the curation pipeline |
@@ -273,6 +259,73 @@ All endpoints (except auth routes) require authentication. Interactive docs at `
 | `GET` | `/api/sessions/:id/download` | Download curated images as a ZIP |
 | `POST` | `/api/sessions/:id/export-drive` | Export curated images to Google Drive |
 | `WS` | `/ws` | WebSocket for real-time progress updates |
+
+---
+
+## Development Story
+
+<img src="client/public/images/otter-processing.png" alt="Otter Mascot" width="160" align="right" />
+
+Currotter was originally built and iterated on **Replit**, where the entire application — frontend, backend, AI pipeline, database — was developed from the ground up. The platform made it easy to prototype quickly and test the multi-agent pipeline in a live environment.
+
+When it came time to move to production infrastructure, the **migration to DigitalOcean took only about 2 hours**. The app was deployed on a DigitalOcean Droplet with a managed PostgreSQL database, Spaces for image storage, and Gradient AI for the vision API — all within the same ecosystem. The clean separation between client, server, and external services made the transition smooth and fast.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js** 20+
+- **PostgreSQL** 14+
+- **DigitalOcean Spaces** bucket — for temporary image storage ([create one here](https://www.digitalocean.com/products/spaces))
+- **DigitalOcean Gradient AI** API key — for vision-based scoring ([get a key here](https://www.digitalocean.com/products/ai))
+
+### Installation
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd currotter
+
+# Install dependencies
+npm install
+
+# Set up environment variables
+cp .env.template .env
+# Open .env and fill in your credentials (see table below)
+
+# Push database schema
+npm run db:push
+
+# Start development server
+npm run dev
+```
+
+The app will be available at `http://localhost:5000`.
+
+### Environment Variables
+
+Copy `.env.template` to `.env` and fill in the values:
+
+| Variable | Description |
+|---|---|
+| `DO_SPACES_KEY` | DigitalOcean Spaces access key ID |
+| `DO_SPACES_SECRET` | DigitalOcean Spaces secret access key |
+| `DO_SPACES_ENDPOINT` | Spaces endpoint (e.g. `nyc3.digitaloceanspaces.com`) |
+| `DO_SPACES_BUCKET` | Spaces bucket name |
+| `GRADIENT_API_KEY` | DigitalOcean Gradient AI API key |
+| `SESSION_SECRET` | Random secret (min 32 chars) for session encryption |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `GOOGLE_CLIENT_ID` | Google OAuth Client ID — for Google Drive export |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth Client Secret — for Google Drive export |
+
+### Build for Production
+
+```bash
+npm run build
+npm start
+```
 
 ---
 
